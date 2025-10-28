@@ -3,13 +3,11 @@ from typing import List, Tuple, Type, Any
 # 导入新插件系统
 from src.plugin_system import BasePlugin, register_plugin, ComponentInfo
 from src.plugin_system.base.config_types import ConfigField
-from src.person_info.person_info import Person
 from src.plugin_system.base.base_tool import BaseTool, ToolParamType
 
 # 导入依赖的系统组件
 from src.common.logger import get_logger
 
-from src.plugins.built_in.relation.relation import BuildRelationAction
 from src.plugin_system.apis import llm_api
 
 logger = get_logger("relation_actions")

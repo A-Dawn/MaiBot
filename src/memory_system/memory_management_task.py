@@ -8,7 +8,6 @@ from src.memory_system.Memory_chest import global_memory_chest
 from src.common.logger import get_logger
 from src.common.database.database_model import MemoryChest as MemoryChestModel
 from src.config.config import global_config
-from src.memory_system.memory_utils import get_all_titles
 
 logger = get_logger("memory")
 
