@@ -1,21 +1,14 @@
-from typing import List, Tuple, Type, Any
+from typing import List, Tuple, Type
 
 # 导入新插件系统
 from src.plugin_system import BasePlugin, register_plugin, ComponentInfo
 from src.plugin_system.base.config_types import ConfigField
-from src.person_info.person_info import Person
-from src.plugin_system.base.base_tool import BaseTool, ToolParamType
 
 # 导入依赖的系统组件
 from src.common.logger import get_logger
 
-from src.plugins.built_in.relation.relation import BuildRelationAction
-from src.plugin_system.apis import llm_api
 from src.plugin_system.base.base_action import BaseAction
 from src.plugin_system.base.component_types import ActionActivationType
-from src.plugin_system.apis import config_api
-from src.plugin_system.apis import frequency_api
-from src.plugin_system.apis import generator_api
 from src.memory_system.questions import global_conflict_tracker
 
 logger = get_logger("question_actions")
@@ -39,11 +32,11 @@ class CuriousAction(BaseAction):
     }
     
     action_require = [
-        f"当聊天记录中的概念存在逻辑上的矛盾时使用",
-        f"当有人反对或否定你提出的信息时使用",
-        f"或当你对现有的概念或事物存在疑问时使用",
-        f"有人认为你的观点是错误的，请选择question动作",
-        f"有人与你观点不一致，请选择question动作",
+        "当聊天记录中的概念存在逻辑上的矛盾时使用",
+        "当有人反对或否定你提出的信息时使用",
+        "或当你对现有的概念或事物存在疑问时使用",
+        "有人认为你的观点是错误的，请选择question动作",
+        "有人与你观点不一致，请选择question动作",
     ]
 
     # 关联类型

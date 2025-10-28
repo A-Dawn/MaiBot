@@ -15,7 +15,6 @@ from src.chat.heart_flow.heartflow_message_processor import HeartFCMessageReceiv
 from src.chat.utils.prompt_builder import Prompt, global_prompt_manager
 from src.plugin_system.core import component_registry, events_manager, global_announcement_manager
 from src.plugin_system.base import BaseCommand, EventType
-from src.person_info.person_info import Person
 
 # 定义日志配置
 

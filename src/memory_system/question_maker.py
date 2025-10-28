@@ -3,7 +3,6 @@ import random
 from typing import List, Optional, Tuple
 from src.chat.utils.chat_message_builder import get_raw_msg_before_timestamp_with_chat, build_readable_messages
 from src.common.database.database_model import MemoryConflict
-from src.config.config import global_config
 
 
 class QuestionMaker:

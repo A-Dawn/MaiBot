@@ -347,7 +347,7 @@ class EventsManager:
             if not isinstance(result, tuple) or len(result) != 5:
                 if isinstance(result, tuple):
                     annotated = ", ".join(
-                        f"{name}={val!r}" for name, val in zip(expected_fields, result)
+                        f"{name}={val!r}" for name, val in zip(expected_fields, result, strict=False)
                     )
                     actual_desc = f"{len(result)} 个元素 ({annotated})"
                 else:

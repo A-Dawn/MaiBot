@@ -10,7 +10,6 @@ from typing import List, Tuple, Optional
 
 from src.common.database.database_model import MemoryChest as MemoryChestModel
 from src.common.logger import get_logger
-from json_repair import repair_json
 
 
 logger = get_logger("memory_utils")

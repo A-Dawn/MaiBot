@@ -13,7 +13,7 @@ if PROJECT_ROOT not in sys.path:
 
 from src.common.data_models.database_data_model import DatabaseMessages
 from src.common.message_repository import find_messages
-from src.chat.utils.chat_message_builder import build_readable_messages, build_readable_messages_anonymized
+from src.chat.utils.chat_message_builder import build_readable_messages_anonymized
 
 
 SECONDS_5_MINUTES = 5 * 60

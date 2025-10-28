@@ -1,4 +1,3 @@
-import time
 import sys
 import os
 import matplotlib.pyplot as plt
@@ -113,7 +112,7 @@ def create_scatter_plot(data: List[Tuple[float, float, str, str]], save_path: st
     plt.tight_layout()
     
     # 显示统计信息
-    print(f"\n=== 数据统计 ===")
+    print("\n=== 数据统计 ===")
     print(f"总数据点数量: {len(data)}")
     print(f"时间范围: {min(dates).strftime('%Y-%m-%d %H:%M:%S')} 到 {max(dates).strftime('%Y-%m-%d %H:%M:%S')}")
     print(f"使用次数范围: {min(counts):.1f} 到 {max(counts):.1f}")
@@ -199,7 +198,7 @@ def create_grouped_scatter_plot(data: List[Tuple[float, float, str, str]], save_
     plt.tight_layout()
     
     # 显示统计信息
-    print(f"\n=== 分组统计 ===")
+    print("\n=== 分组统计 ===")
     print(f"总聊天数量: {len(chat_groups)}")
     for chat_id, chat_data in chat_groups.items():
         chat_name = get_chat_name(chat_id)
@@ -281,7 +280,7 @@ def create_type_scatter_plot(data: List[Tuple[float, float, str, str]], save_pat
     plt.tight_layout()
     
     # 显示统计信息
-    print(f"\n=== 类型统计 ===")
+    print("\n=== 类型统计 ===")
     for expr_type, type_data in type_groups.items():
         counts = [item[1] for item in type_data]
         print(f"{expr_type}: {len(type_data)}个表达式, 平均使用次数: {np.mean(counts):.2f}")

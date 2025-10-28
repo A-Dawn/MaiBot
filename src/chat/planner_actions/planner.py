@@ -14,8 +14,6 @@ from src.common.logger import get_logger
 from src.common.data_models.info_data_model import ActionPlannerInfo
 from src.chat.utils.prompt_builder import Prompt, global_prompt_manager
 from src.chat.utils.chat_message_builder import (
-    build_readable_actions,
-    get_actions_by_timestamp_with_chat,
     build_readable_messages_with_id,
     get_raw_msg_before_timestamp_with_chat,
 )

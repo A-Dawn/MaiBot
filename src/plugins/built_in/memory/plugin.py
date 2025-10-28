@@ -7,7 +7,7 @@ from src.plugin_system.base.config_types import ConfigField
 # 导入依赖的系统组件
 from src.common.logger import get_logger
 
-from src.plugins.built_in.memory.build_memory import GetMemoryAction, GetMemoryTool
+from src.plugins.built_in.memory.build_memory import GetMemoryTool
 
 logger = get_logger("memory_build")
 
