@@ -12,3 +12,6 @@ multi_comment_field = "example"
 # The comment spans multiple lines, which should appear as multi-line comments.
 
 field_after_multi_comment = "after" # Field after multi-comment to test ordering, should have a whitespace above.
+nested_list_config = [{detail = "nested1"}, {detail = "nested2"}] # Nested list of SubConfig for testing
+nested_tuple_config = [{detail = "nested"}, "nested"]
+nested_dict_config = {key = {detail = "dict_nested"}} # Nested dict of SubConfig for testing

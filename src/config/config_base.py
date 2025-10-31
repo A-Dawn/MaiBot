@@ -122,9 +122,9 @@ class ConfigContentBase:
         # 处理基础类型，例如 int, str 等
         if field_type is bool and isinstance(value, str):
             lowered = value.lower()
-            if lowered in {"true", "1"}:
+            if lowered in {"true", "1", "enabled", "yes"}:
                 return True
-            elif lowered in {"false", "0"}:
+            elif lowered in {"false", "0", "disabled", "no"}:
                 return False
             else:
                 raise TypeError(f"Cannot convert string '{value}' to bool")

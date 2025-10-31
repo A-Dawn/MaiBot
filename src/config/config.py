@@ -84,7 +84,7 @@ def write_config_to_file(config: Config, config_path: Path, override_repr: bool 
         if isinstance(config_field, ConfigBase):
             full_config_data.add(config_item.name, recursive_parse_item_to_table(config_field))
         else:
-            full_config_data.add(config_item.name, config_field)
+            raise TypeError("配置写入只支持ConfigBase子类")
 
     # 写入文件
     with open(config_path, "w", encoding="utf-8") as f:
