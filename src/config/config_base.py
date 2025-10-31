@@ -163,51 +163,86 @@ class AttrDocBase:
         :param cls: 配置类
         :return: 字段说明字典，键为字段名，值为说明字符串
         """
+        # 获取类的源代码文本
         class_source = cls._get_class_source()
+        # 解析源代码，找到对应的类定义节点
         class_node = cls._find_class_node(class_source)
+        # 从类定义节点中提取字段文档
         return cls._extract_field_docs(class_node)
 
     @classmethod
     def _get_class_source(cls) -> str:
+        """获取类定义所在文件的完整源代码"""
+        # 使用 inspect 模块获取类定义所在的文件路径
         class_file = inspect.getfile(cls)
+        # 读取文件内容并以 UTF-8 编码返回
         return Path(class_file).read_text(encoding="utf-8")
 
     @classmethod
     def _find_class_node(cls, class_source: str) -> ast.ClassDef:
+        """在源代码的 AST 中查找当前类的定义节点"""
+        # 将源代码解析为抽象语法树 (AST)
         tree = ast.parse(class_source)
+        # 遍历 AST 中的所有节点
         for node in ast.walk(tree):
+            # 查找类定义节点，且类名与当前类名匹配
             if isinstance(node, ast.ClassDef) and node.name == cls.__name__:
                 return node
+        # 如果没有找到匹配的类定义，抛出异常
         raise AttributeError(f"Class {cls.__name__} not found in source.")
 
     @classmethod
     def _extract_field_docs(cls, class_node: ast.ClassDef) -> dict[str, str]:
+        """从类的 AST 节点中提取字段的文档字符串"""
         doc_dict: dict[str, str] = {}
+        # 获取类体中的所有语句
         class_body = class_node.body
+        
+        # 遍历类体中的每个语句
         for i in range(len(class_body)):
             body_item = class_body[i]
+            
+            # 检查是否有非 __post_init__ 的方法定义，如果有则抛出异常
+            # 这个限制确保 AttrDocBase 子类只包含字段定义和 __post_init__ 方法
             if isinstance(body_item, ast.FunctionDef) and body_item.name != "__post_init__":
                 raise AttributeError(
                     f"Methods are not allowed in AttrDocBase subclasses except __post_init__, found {str(body_item.name)}"
                 ) from None
+            
+            # 检查当前语句是否为带注解的赋值语句 (类型注解的字段定义)
+            # 并且下一个语句存在
             if (
                 i + 1 < len(class_body)
-                and isinstance(body_item, ast.AnnAssign)
-                and isinstance(body_item.target, ast.Name)
+                and isinstance(body_item, ast.AnnAssign)  # 例如: field_name: int = 10
+                and isinstance(body_item.target, ast.Name)  # 目标是一个简单的名称
             ):
+                # 获取下一个语句
                 expr_item = class_body[i + 1]
+                
+                # 检查下一个语句是否为字符串常量表达式 (文档字符串)
                 if (
-                    isinstance(expr_item, ast.Expr)
-                    and isinstance(expr_item.value, ast.Constant)
-                    and isinstance(expr_item.value.value, str)
+                    isinstance(expr_item, ast.Expr)  # 表达式语句
+                    and isinstance(expr_item.value, ast.Constant)  # 常量值
+                    and isinstance(expr_item.value.value, str)  # 字符串常量
                 ):
+                    # 获取文档字符串并去除首尾空白
                     doc_string = expr_item.value.value.strip()
+                    
+                    # 将文档字符串按行分割，并去除每行的首尾空白
                     processed_doc_lines = [line.strip() for line in doc_string.splitlines()]
+                    
+                    # 删除开头的所有空行
                     while processed_doc_lines and not processed_doc_lines[0]:
                         processed_doc_lines.pop(0)
+                    
+                    # 删除结尾的所有空行
                     while processed_doc_lines and not processed_doc_lines[-1]:
                         processed_doc_lines.pop()
+                    
+                    # 将处理后的行重新组合，并存入字典
+                    # 键是字段名，值是清理后的文档字符串
                     doc_dict[body_item.target.id] = "\n".join(processed_doc_lines)
+        
         return doc_dict
 
 
