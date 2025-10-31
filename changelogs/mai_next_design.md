@@ -511,6 +511,12 @@ SYSTEM_CONSTANTS = SystemConstants()
 - 使用 pyproject.toml 和 requirements.txt 管理依赖
 - 二者应保持同步修改，同时以 pyproject.toml 为主（建议使用git hook）
 
+---
+
+# 迁移说明
+由于`.env`的移除，可能需要用户自己把`.env`里面的host和port复制到`bot_config.toml`中的`maim_message`部分的`host`和`port`
+原来使用这两个的用户，请修改`host`到`second_host`，`port`到`second_port`
+
 # 附录
 ## Maim_Message 新版使用计划
 SenderInfo: 将作为消息来源者
