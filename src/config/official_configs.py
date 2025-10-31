@@ -382,14 +382,20 @@ class ExperimentalConfig(ConfigBase):
 class MaimMessageConfig(ConfigBase):
     """maim_message配置类"""
 
+    main_host: str = "127.0.0.1"
+    """主机地址"""
+
+    main_port: int = 8080
+    """主机端口号"""
+
     use_custom: bool = False
     """是否使用自定义的maim_message配置"""
 
     host: str = "127.0.0.1"
-    """主机地址"""
+    """自定义第二主机地址"""
 
     port: int = 8090
-    """"端口号"""
+    """"自定义第二端口号"""
 
     mode: Literal["ws", "tcp"] = "ws"
     """连接模式，支持ws和tcp"""
