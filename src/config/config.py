@@ -110,16 +110,24 @@ class Config(ConfigBase):
     lpmm_knowledge: LPMMKnowledgeConfig
     """LPMM知识库配置类"""
 
+@dataclass
+class AttributeData:
+    missing_attributes: list[str] = field(default_factory=list)
+    """缺失的属性列表"""
+    redundant_attributes: list[str] = field(default_factory=list)
+    """多余的属性列表"""
+
 def load_config_from_file(config_path: Path) -> Config:
     """从文件加载配置
 
     :param config_path: 配置文件路径
     :return: 配置对象
     """
+    attribute_data = AttributeData()
     with open(config_path, "r", encoding="utf-8") as f:
         config_data = tomlkit.load(f)
     try:
-        return Config.from_dict(config_data)
+        return Config.from_dict(config_data, attribute_data)
     except Exception as e:
         # logger.critical("配置文件解析失败")
         raise e

@@ -13,7 +13,7 @@ sys.path.insert(0, str(PROJECT_ROOT))
 sys.path.insert(0, str(PROJECT_ROOT / "src" / "config"))
 
 from src.config.config_base import ConfigBase  # noqa: E402
-from src.config.config import write_config_to_file  # noqa: E402
+from src.config.config import write_config_to_file, AttributeData  # noqa: E402
 
 
 @dataclass
@@ -76,7 +76,7 @@ def test_write_config_to_file(tmp_path: Path):
     config_dir = tmp_path / "configs"
     config_dir.mkdir(parents=True, exist_ok=True)
     config_path = config_dir / "test_config.toml"
-    config = SimpleConfig.from_dict(standard_config)
+    config = SimpleConfig.from_dict(standard_config, AttributeData())
     write_config_to_file(config, config_path)  # type: ignore
     with open(config_path, "r", encoding="utf-8") as f:
         content = f.read()

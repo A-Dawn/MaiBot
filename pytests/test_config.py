@@ -7,6 +7,7 @@ from pathlib import Path
 import tomlkit
 import pytest
 import sys
+import copy
 
 # 测试对象导入
 PROJECT_ROOT: Path = Path(__file__).parent.parent.absolute().resolve()
@@ -14,6 +15,7 @@ sys.path.insert(0, str(PROJECT_ROOT))
 sys.path.insert(0, str(PROJECT_ROOT / "src" / "config"))
 
 from src.config.config_base import ConfigBase  # noqa: E402
+from src.config.config import AttributeData  # noqa: E402
 
 standard_config_data = {
     "int_field": 42,
@@ -74,6 +76,19 @@ class GoodConfig(ConfigBase):
         super().__post_init__()
 
 
+@dataclass
+class SubConfigWithValues(ConfigBase):
+    value2: int = 20
+    text2: str = "default2"
+
+
+@dataclass
+class ConfigWithValues(ConfigBase):
+    sub_config: SubConfigWithValues = field(default_factory=SubConfigWithValues)
+    value: int = 10
+    text: str = "default"
+
+
 def assert_values(config: ConfigExample):
     assert config.int_field == 42, "wrong int_field value"
     assert config.float_field == 3.14, "wrong float_field value"
@@ -100,7 +115,7 @@ def assert_values(config: ConfigExample):
 
 
 def test_config_base_from_dict():
-    config = ConfigExample.from_dict(standard_config_data)
+    config = ConfigExample.from_dict(standard_config_data, AttributeData())
     assert_values(config)
 
 
@@ -109,23 +124,23 @@ def test_config_base_from_file():
     with open(file_path.resolve().absolute(), "r", encoding="utf-8") as f:
         toml_content = tomlkit.load(f)
 
-    config = ConfigExample.from_dict(toml_content)
+    config = ConfigExample.from_dict(toml_content, AttributeData())
     assert_values(config)
 
 
-e_int_config_data = standard_config_data.copy()
+e_int_config_data = copy.deepcopy(standard_config_data)
 e_int_config_data["int_field"] = "40"  # 会被转换，应该报AssertionError
-e_list_config_data = standard_config_data.copy()
+e_list_config_data = copy.deepcopy(standard_config_data)
 e_list_config_data["list_field"] = []  # 列表为空，应该被覆盖并报AssertionError
-e_set_config_data = standard_config_data.copy()
+e_set_config_data = copy.deepcopy(standard_config_data)
 e_set_config_data["set_field"] = ("a", "b", "c")  # 错误类型
-e_subclass_config_data = standard_config_data.copy()
+e_subclass_config_data = copy.deepcopy(standard_config_data)
 e_subclass_config_data.pop("sub_class")  # 缺少关键字
-e_list_type_config_data = standard_config_data.copy()
+e_list_type_config_data = copy.deepcopy(standard_config_data)
 e_list_type_config_data["list_field"] = ["nan", 2, 3]  # 元素类型错误
-e_bool_config_data = standard_config_data.copy()
+e_bool_config_data = copy.deepcopy(standard_config_data)
 e_bool_config_data["bool_field"] = "False"  # 会被转换，应该报AssertionError
-multiline_str_config_data = standard_config_data.copy()
+multiline_str_config_data = copy.deepcopy(standard_config_data)
 multiline_str_config_data["str_field"] = """
 line1
 line2
@@ -146,7 +161,7 @@ line3
 )
 def test_multiple_exceptions(config_data, expected_exception, expected_message):
     with pytest.raises(expected_exception) as exc_info:
-        config = ConfigExample.from_dict(config_data)
+        config = ConfigExample.from_dict(config_data, AttributeData())
         assert_values(config)
     # 确保异常类型正确
     assert exc_info.type == expected_exception
@@ -155,7 +170,7 @@ def test_multiple_exceptions(config_data, expected_exception, expected_message):
 
 
 def test_multiline_string():
-    config = ConfigExample.from_dict(multiline_str_config_data)
+    config = ConfigExample.from_dict(multiline_str_config_data, AttributeData())
     assert config.str_field == "\nline1\nline2\nline3\n", "wrong multiline str_field value"
 
 
@@ -172,7 +187,7 @@ def test_doc_strings():
         "sub_class": {"sub_field": "sub_value"},
     }
 
-    config = ConfigExample.from_dict(config_data)
+    config = ConfigExample.from_dict(config_data, AttributeData())
     field_docs = config.field_docs
     assert field_docs["int_field"] == "The value is integer type"
     assert field_docs["float_field"] == "The value is float type"
@@ -197,10 +212,18 @@ def test_doc_strings():
 def test_method_exception(target_class, config_data, expected_exception, expected_message):
     if expected_exception:
         with pytest.raises(expected_exception) as exc_info:
-            _ = target_class.from_dict(config_data)
+            _ = target_class.from_dict(config_data, AttributeData())
         # 确保异常类型正确
         assert exc_info.type == expected_exception
         # 确保异常消息包含预期内容
         assert expected_message in str(exc_info.value)
     else:
-        target_class.from_dict(config_data)
+        target_class.from_dict(config_data, AttributeData())
+
+
+def test_config_with_values_defaults():
+    config_data = {"text": "custom", "bool_field": False, "sub_config": {"value2": 50, "bool_field2": True}}
+    attr_data = AttributeData()
+    _ = ConfigWithValues.from_dict(config_data, attr_data)
+    assert attr_data.missing_attributes == ["text2", "value"]  # 先里后外的说
+    assert attr_data.redundant_attributes == ["bool_field2", "bool_field"]
