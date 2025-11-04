@@ -1,5 +1,5 @@
 # Mai NEXT 设计文档
-Version 0.1.9 - 2025-10-19
+Version 0.2.2 - 2025-11-05
 
 ## 配置文件设计
 - [x] 使用 `toml` 作为配置文件格式
@@ -7,8 +7,9 @@ Version 0.1.9 - 2025-10-19
 - [x] 使用 python 方法作为配置项说明（提案）
     - [x] 取消`bot_config_template.toml`
     - [ ] 取消`model_config_template.toml`
-- [x] 配置类中的所有原子项目应该只包含以下类型: `str`, `int`, `float`, `bool`, `list`, `dict`, `set`, `tuple`
+- [x] 配置类中的所有原子项目应该只包含以下类型: `str`, `int`, `float`, `bool`, `list`, `dict`, `set`
     - [ ] 暂时禁止使用 `Union` 类型（尚未支持解析）
+    - [ ] 不建议使用`tuple`类型，使用时会发出警告，考虑使用嵌套`dataclass`替代
     - [x] 复杂类型使用嵌套配置类实现
 ### 移除template的方案提案
 <details>
@@ -57,10 +58,10 @@ class Config(ConfigBase, AttrDocBase):
 #### 整体架构设计
 - [ ] 文件监视器
     - [ ] 监视文件变化
-        - [ ] 使用 `watchdog` 监视配置文件变化（提案）
+        - [ ] 使用 `watchfiles` 监视配置文件变化（提案）
         - [ ] <del>备选提案：使用纯轮询监视文件变化</del>
     - [ ] 使用Hash检查文件变化
-    - [ ] 防抖处理
+    - [ ] 防抖处理(使用`watchfiles`的防抖)
 - [ ] 配置管理器
     - [ ] 配置文件读取和加载
     - [ ] 重载配置
@@ -68,7 +69,7 @@ class Config(ConfigBase, AttrDocBase):
     - [ ] `validate_config` 方法
 - [ ] 回调管理器
     - [ ] `callback` 注册与注销
-    - [ ] 按优先级执行回调（提案）
+    - [ ] <del>按优先级执行回调（提案）</del>
     - [ ] 错误隔离
     - [ ] 锁机制
 
@@ -83,11 +84,12 @@ class Config(ConfigBase, AttrDocBase):
 ```
 
 #### 回调执行策略
-1. 优先级顺序（提案）: 数字越小优先级越高，同优先级异步回调并行执行
+1. <del>优先级顺序（提案）: 数字越小优先级越高，同优先级异步回调并行执行</del>
 2. 错误处理: 单个回调失败不影响其他回调
 
 
 #### 代码框架
+实际代码实现与下类似，但是进行了调整
 
 `ConfigManager` - 配置管理器:
 ```python
@@ -128,18 +130,13 @@ class ConfigManager:
         """验证配置合法性"""
         pass
 ```
+<details>
+<summary>回调管理器（废案）</summary>
 
 `CallbackManager` - 回调管理器:
 ```python
 import asyncio
 from dataclasses import dataclass, field
-
-@dataclass
-class CallbackEntry:
-    callback: Callable
-    priority: int = 100
-    enabled: bool = True
-    name: str = field(default="")
 
 class CallbackManager:
     def __init__(self):
@@ -181,20 +178,17 @@ class CallbackManager:
     - 而优先级模块是保证某一些模块的重载顺序一定是晚于某一些地基模块的
     - 例如：内置服务器的启动应该是晚于所有模块，即最后启动
 
+</details>
+
 `FileWatcher` - 文件监视器:
 ```python
 import asyncio
-from watchdog.observers import Observer
-from watchdog.events import FileSystemEventHandler
+from watchfiles import awatch, Change
 from pathlib import Path
 
 class FileWatcher:
-    def __init__(self, file_path: Path, debounce_ms: int = 500):
-        self.file_path: Path = file_path
+    def __init__(self, debounce_ms: int = 500):
         self.debounce_ms: int = debounce_ms
-        self._observer: Optional[Observer] = None
-        self._on_change_callback: Optional[Callable] = None
-        self._debounce_task: Optional[asyncio.Task] = None
     
     def start(self, on_change: Callable) -> None:
         """启动文件监视"""
@@ -204,8 +198,8 @@ class FileWatcher:
         """停止文件监视"""
         pass
     
-    async def _debounced_change(self) -> None:
-        """防抖处理"""
+    async def invoke_callback(self) -> None:
+        """调用变化回调函数"""
         pass
 ```
 #### 配置文件写入
@@ -455,8 +449,8 @@ SYSTEM_CONSTANTS = SystemConstants()
 #### 配置文件
 - [ ] 使用`tomlkit`作为配置文件解析方式
 - [ ] 解析内容
-    - [ ] 注释
-    - [ ] 保持原有格式
+    - [x] 注释（已经合并到代码中，不再解析注释而是生成注释）
+    - [x] 保持原有格式
 
 ---
 
