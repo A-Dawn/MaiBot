@@ -1,5 +1,5 @@
 from dataclasses import fields, Field
-from typing import Any, get_args, get_origin, TYPE_CHECKING
+from typing import Any, get_args, get_origin, TYPE_CHECKING, Literal
 from tomlkit import items
 import tomlkit
 
@@ -88,6 +88,10 @@ def convert_field(config_item: Field[Any], value: Any):
             else:
                 toml_sub_table.add(k, v)
         return toml_sub_table
+    elif field_type_origin is Literal:
+        if value not in field_type_args:
+            raise ValueError(f"Value {value} not in Literal options {field_type_args} for {config_item.name}")
+        return value
     else:
         raise TypeError(f"Unsupported field type for {config_item.name}: {config_item.type}")
 

@@ -224,7 +224,7 @@ def load_config_from_file(config_class: type[T], config_path: Path, new_ver: str
             updated = True
         return target_config, updated
     except Exception as e:
-        logger.critical("模型配置文件解析失败")
+        logger.critical(f"配置文件{config_path.name}解析失败")
         raise e
 
 
@@ -251,6 +251,13 @@ def write_config_to_file(
         config_field = getattr(config, config_item.name)
         if isinstance(config_field, ConfigBase):
             full_config_data.add(config_item.name, recursive_parse_item_to_table(config_field))
+        elif isinstance(config_field, list):
+            aot = tomlkit.aot()
+            for item in config_field:
+                if not isinstance(item, ConfigBase):
+                    raise TypeError("配置写入只支持ConfigBase子类")
+                aot.append(recursive_parse_item_to_table(item))
+            full_config_data.add(config_item.name, aot)
         else:
             raise TypeError("配置写入只支持ConfigBase子类")
 

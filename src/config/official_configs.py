@@ -71,6 +71,20 @@ class RelationshipConfig(ConfigBase):
 
 
 @dataclass
+class ChatValueRule(ConfigBase):
+    """聊天价值规则配置类"""
+
+    target: str = ""
+    """字符串为空则表示全局，否则按照 "platform:id:type" 格式书写, type 可选 group/private。优先级为特定聊天 > 全局规则。"""
+
+    time: str = ""
+    """时间段，按照格式 "HH:MM-HH:MM" 书写，支持跨夜区间，例如 "23:00-02:00" """
+
+    value: float = 1.0
+    """值，建议0-1之间"""
+
+
+@dataclass
 class ChatConfig(ConfigBase):
     """聊天配置类"""
 
@@ -92,28 +106,13 @@ class ChatConfig(ConfigBase):
     enable_talk_value_rules: bool = True
     """是否启用动态发言频率规则"""
 
-    talk_value_rules: list[tuple[str, str, float]] = field(
+    talk_value_rules: list[ChatValueRule] = field(
         default_factory=lambda: [
-            ("", "00:00-08:59", 0.8),
-            ("", "09:00-22:59", 1.0),
+            ChatValueRule("", "00:00-08:59", 0.8),
+            ChatValueRule("", "09:00-22:59", 1.0),
         ]
     )
-    """
-    发言思考频率规则调整，支持按聊天/按时段配置。
-    规则格式：[target, time, value]
-
-    target 字符串为空则表示全局，否则按照 "platform:id:type" 格式书写, type 可选 group/private。优先级为特定聊天 > 全局规则。
-    time 按照格式 "HH:MM-HH:MM" 书写，支持跨夜区间，例如 "23:00-02:00"
-    value 范围建议 0-1。
-
-    示例:
-    [
-        ["", "00:00-08:59", 0.2],                  # 全局规则：凌晨到早上更安静
-        ["", "09:00-22:59", 1.0],                  # 全局规则：白天正常
-        ["qq:1919810:group", "20:00-23:59", 0.6],  # 指定群id为1919810的群在晚高峰降低发言
-        ["qq:114514:private", "00:00-23:59", 0.3], # 指定用户id为114514的用户私聊全时段较安静
-    ]
-    """
+    """发言思考频率规则调整，支持按聊天/按时段配置。"""
 
     active_chat_value: float = 1
     """麦麦主动聊天频率，越小则主动聊天的概率越低"""
@@ -121,10 +120,10 @@ class ChatConfig(ConfigBase):
     enable_active_chat_value_rules: bool = True
     """是否启用动态主动聊天频率规则"""
 
-    active_chat_value_rules: list[tuple[str, str, float]] = field(
+    active_chat_value_rules: list[ChatValueRule] = field(
         default_factory=lambda: [
-            ("", "00:00-08:59", 0.3),
-            ("", "09:00-22:59", 1.0),
+            ChatValueRule("", "00:00-08:59", 0.3),
+            ChatValueRule("", "09:00-22:59", 1.0),
         ]
     )
     """
@@ -163,6 +162,23 @@ class MemoryConfig(ConfigBase):
 
 
 @dataclass
+class LearningConfig(ConfigBase):
+    """学习配置类"""
+
+    target: str = ""
+    """配置聊天，格式同 chat_value，空字符串表示全局配置"""
+
+    use_expression: bool = True
+    """是否使用学到的表达"""
+
+    enable_learning: bool = True
+    """是否学习表达"""
+
+    learning_intensity: float = 0.5
+    """学习强度(float), 影响学习频率, 最短学习时间间隔 = 300/学习强度（秒）学习强度越高，学习越频繁；学习强度越低，学习越少"""
+
+
+@dataclass
 class ExpressionConfig(ConfigBase):
     """表达配置类"""
 
@@ -173,25 +189,8 @@ class ExpressionConfig(ConfigBase):
     后者需要一定时间学习才有好效果
     """
 
-    learning_list: list[tuple[str, bool, bool, float]] = field(default_factory=lambda: [("", True, True, 1.0)])
-    """
-    表达学习配置列表，支持按聊天配置
-    格式: [(chat, use_expression, enable_learning, learning_intensity), ...]
-
-    示例:
-    [
-        ["", true, true, 1.0],  # 全局配置：使用表达，启用学习，学习强度1.0
-        ["qq:1919810:private", true, true, 1.5],  # 特定私聊配置：使用表达，启用学习，学习强度1.5
-        ["qq:114514:private", true, false, 0.5],  # 特定私聊配置：使用表达，禁用学习，学习强度0.5
-    ]
-
-    说明:
-    - 第一位: chat, 配置聊天, 格式同 talk_value, 空字符串表示全局配置
-    - 第二位: 是否使用学到的表达
-    - 第三位: 是否学习表达
-    - 第四位: 学习强度（浮点数），影响学习频率，最短学习时间间隔 = 300/学习强度（秒）
-    学习强度越高，学习越频繁；学习强度越低，学习越少
-    """
+    learning_list: list[LearningConfig] = field(default_factory=lambda: [LearningConfig("", True, True, 1.0)])
+    """表达学习配置列表，支持按聊天配置"""
 
     expression_groups: list[list[str]] = field(default_factory=list)
     """

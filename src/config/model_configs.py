@@ -35,6 +35,7 @@ class APIProvider(ConfigBase):
             raise ValueError("API基础URL不能为空, 请在配置中设置有效的基础URL。")
         if not self.name:
             raise ValueError("API提供商名称不能为空, 请在配置中设置有效的名称。")
+        return super().__post_init__()
 
 
 @dataclass
@@ -69,6 +70,7 @@ class ModelInfo(ConfigBase):
             raise ValueError("模型名称不能为空, 请在配置中设置有效的模型名称。")
         if not self.api_provider:
             raise ValueError("API提供商不能为空, 请在配置中设置有效的API提供商。")
+        return super().__post_init__()
 
 
 @dataclass
