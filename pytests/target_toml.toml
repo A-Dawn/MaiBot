@@ -15,3 +15,4 @@ field_after_multi_comment = "after" # Field after multi-comment to test ordering
 nested_list_config = [{detail = "nested1"}, {detail = "nested2"}] # Nested list of SubConfig for testing
 nested_tuple_config = [{detail = "nested"}, "nested"]
 nested_dict_config = {key = {detail = "dict_nested"}} # Nested dict of SubConfig for testing
+bool_field = true # Boolean field for testing

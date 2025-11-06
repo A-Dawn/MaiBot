@@ -8,6 +8,7 @@ from .config_base import ConfigBase
 if TYPE_CHECKING:
     from .config import AttributeData
 
+
 def recursive_parse_item_to_table(config: ConfigBase, is_inline_table: bool = False) -> items.Table | items.InlineTable:
     # sourcery skip: merge-else-if-into-elif, reintroduce-else
     """递归解析配置项为表格"""
@@ -34,7 +35,14 @@ def comment_doc_string(
     if doc_string := config.field_docs.get(field_name, ""):
         doc_string_splitted = doc_string.splitlines()
         if len(doc_string_splitted) == 1:
-            toml_table[field_name].comment(doc_string_splitted[0])
+            if isinstance(toml_table[field_name], bool):
+                # tomlkit 故意设计的行为，布尔值不能直接添加注释
+                value = toml_table[field_name]
+                item = tomlkit.item(value)
+                item.comment(doc_string_splitted[0])
+                toml_table[field_name] = item
+            else:
+                toml_table[field_name].comment(doc_string_splitted[0])
         else:
             for line in doc_string_splitted:
                 toml_table.add(tomlkit.comment(line))
@@ -83,6 +91,7 @@ def convert_field(config_item: Field[Any], value: Any):
     else:
         raise TypeError(f"Unsupported field type for {config_item.name}: {config_item.type}")
 
+
 def output_config_changes(attr_data: "AttributeData", logger, old_ver: str, new_ver: str, file_name: str):
     """输出配置变更信息"""
     logger.info("-------- 配置文件变更信息 --------")
@@ -92,8 +101,11 @@ def output_config_changes(attr_data: "AttributeData", logger, old_ver: str, new_
     logger.info(f"移除配置数量: {len(attr_data.redundant_attributes)}")
     for attr in attr_data.redundant_attributes:
         logger.warning(f"移除配置项: {attr}")
-    logger.info(f"{file_name}配置文件已经更新. Old: {old_ver} -> New: {new_ver} 建议检查新配置文件中的内容, 以免丢失重要信息")
-    
+    logger.info(
+        f"{file_name}配置文件已经更新. Old: {old_ver} -> New: {new_ver} 建议检查新配置文件中的内容, 以免丢失重要信息"
+    )
+
+
 def compare_versions(old_ver: str, new_ver: str) -> bool:
     """比较版本号，返回是否有更新"""
     old_parts = [int(part) for part in old_ver.split(".")]
