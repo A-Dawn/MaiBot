@@ -1,0 +1,60 @@
+name: Mirror Docker Hub latest to Tencent TCR (skopeo amd64 only)
+
+on:
+  schedule:
+    - cron: "0 */6 * * *"
+  workflow_dispatch: {}
+
+concurrency:
+  group: mirror-latest-to-tcr
+  cancel-in-progress: false
+
+jobs:
+  mirror:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: Install skopeo
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y skopeo
+
+      - name: Mirror latest images (amd64 only)
+        env:
+          NS: ${{ secrets.TCR_NAMESPACE }}
+          TCR_USER: ${{ secrets.TCR_USERNAME }}
+          TCR_PASS: ${{ secrets.TCR_PASSWORD }}
+        run: |
+          set -euo pipefail
+
+          mirror () {
+            local src="$1"
+            local dst="$2"
+            local src_ref="docker://docker.io/${src}:latest"
+            local dst_ref="docker://ccr.ccs.tencentyun.com/${NS}/${dst}:latest"
+
+            echo "==== ${src_ref} -> ${dst_ref} (linux/amd64) ===="
+
+            for i in 1 2 3 4 5; do
+              echo "Copy attempt $i..."
+              if timeout 1800 skopeo copy \
+                --override-os linux --override-arch amd64 \
+                --dest-creds "${TCR_USER}:${TCR_PASS}" \
+                "${src_ref}" "${dst_ref}"; then
+                echo "OK"
+                return 0
+              fi
+              echo "Retry in 5s..."
+              sleep 5
+            done
+
+            echo "FAILED: ${dst_ref}"
+            return 1
+          }
+
+          mirror unclas/maimbot-adapter maimbot-adapter
+          mirror sengokucola/maibot maibot
+          mirror mlikiowa/napcat-docker napcat-docker
+          mirror coleifer/sqlite-web sqlite-web
+          # mirror chat2db/chat2db chat2db
