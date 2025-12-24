@@ -1,19 +1,32 @@
-name: Mirror Docker Hub latest images to Tencent TCR
+name: Mirror Docker Hub latest images to Tencent TCR (fast parallel)
 
 on:
   schedule:
-    - cron: "0 */6 * * *"
-  workflow_dispatch: {}
+    - cron: "0 */6 * * *"   # 每 6 小时同步一次
+  workflow_dispatch: {}     # 允许手动 Run
 
-# 防止并发（手动触发/定时触发撞车、或重复触发导致 push 卡住）
+# 防止同一时间跑两次（手动触发撞上定时）
 concurrency:
   group: mirror-latest-to-tcr
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   mirror:
     runs-on: ubuntu-latest
     timeout-minutes: 60
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - src: unclas/maimbot-adapter
+            dst: maimbot-adapter
+          - src: sengokucola/maibot
+            dst: maibot
+          - src: mlikiowa/napcat-docker
+            dst: napcat-docker
+          - src: coleifer/sqlite-web
+            dst: sqlite-web
 
     steps:
       - name: Login to Tencent TCR
@@ -21,39 +34,32 @@ jobs:
           echo "${{ secrets.TCR_PASSWORD }}" | docker login ccr.ccs.tencentyun.com \
             -u "${{ secrets.TCR_USERNAME }}" --password-stdin
 
-      - name: Mirror latest images (fast & robust)
+      - name: Mirror ${{ matrix.src }}:latest -> ${{ matrix.dst }}:latest
         env:
           NS: ${{ secrets.TCR_NAMESPACE }}
+          SRC: ${{ matrix.src }}
+          DST: ${{ matrix.dst }}
         run: |
           set -euo pipefail
 
-          mirror () {
-            local src="$1"  # e.g. unclas/maimbot-adapter
-            local dst="$2"  # e.g. maimbot-adapter
-            local dst_img="ccr.ccs.tencentyun.com/${NS}/${dst}:latest"
+          dst_img="ccr.ccs.tencentyun.com/${NS}/${DST}:latest"
 
-            echo "==> Pull ${src}:latest"
-            timeout 900 docker pull "${src}:latest"
+          echo "==> Pull ${SRC}:latest"
+          timeout 900 docker pull "${SRC}:latest"
 
-            echo "==> Tag -> ${dst_img}"
-            docker tag "${src}:latest" "${dst_img}"
+          echo "==> Tag -> ${dst_img}"
+          docker tag "${SRC}:latest" "${dst_img}"
 
-            # push 偶发会卡在 manifest/收尾：加超时 + 重试
-            for i in 1 2 3 4 5; do
-              echo "==> Push ${dst_img} (attempt ${i})"
-              if timeout 900 docker push "${dst_img}"; then
-                echo "OK: ${dst_img}"
-                return 0
-              fi
-              echo "Retry in $((i*10))s..."
-              sleep $((i*10))
-            done
+          # push 偶发慢：加超时 + 重试
+          for i in 1 2 3 4 5; do
+            echo "==> Push ${dst_img} (attempt ${i})"
+            if timeout 1200 docker push "${dst_img}"; then
+              echo "OK: ${dst_img}"
+              exit 0
+            fi
+            echo "Retry in $((i*10))s..."
+            sleep $((i*10))
+          done
 
-            echo "FAILED: ${dst_img}"
-            return 1
-          }
-
-          mirror unclas/maimbot-adapter maimbot-adapter
-          mirror sengokucola/maibot maibot
-          mirror mlikiowa/napcat-docker napcat-docker
-          mirror coleifer/sqlite-web sqlite-web
+          echo "FAILED: ${dst_img}"
+          exit 1
