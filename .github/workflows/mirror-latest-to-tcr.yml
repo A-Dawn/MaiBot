@@ -2,30 +2,55 @@ name: Mirror Docker Hub latest images to Tencent TCR
 
 on:
   schedule:
-    - cron: "0 */6 * * *"   # 每 6 小时同步一次 latest
-  workflow_dispatch: {}     # 允许手动点 Run
+    - cron: "0 */6 * * *"
+  workflow_dispatch: {}
+
+# 防止并发（手动触发/定时触发撞车、或重复触发导致 push 卡住）
+concurrency:
+  group: mirror-latest-to-tcr
+  cancel-in-progress: true
 
 jobs:
   mirror:
     runs-on: ubuntu-latest
+    timeout-minutes: 25
+
     steps:
       - name: Login to Tencent TCR
         run: |
           echo "${{ secrets.TCR_PASSWORD }}" | docker login ccr.ccs.tencentyun.com \
             -u "${{ secrets.TCR_USERNAME }}" --password-stdin
 
-      - name: Mirror latest images
+      - name: Mirror latest images (fast & robust)
         env:
           NS: ${{ secrets.TCR_NAMESPACE }}
         run: |
-          set -e
+          set -euo pipefail
 
           mirror () {
-            src="$1"
-            dst="$2"
-            docker pull "$src:latest"
-            docker tag "$src:latest" "ccr.ccs.tencentyun.com/${NS}/${dst}:latest"
-            docker push "ccr.ccs.tencentyun.com/${NS}/${dst}:latest"
+            local src="$1"  # e.g. unclas/maimbot-adapter
+            local dst="$2"  # e.g. maimbot-adapter
+            local dst_img="ccr.ccs.tencentyun.com/${NS}/${dst}:latest"
+
+            echo "==> Pull ${src}:latest"
+            timeout 900 docker pull "${src}:latest"
+
+            echo "==> Tag -> ${dst_img}"
+            docker tag "${src}:latest" "${dst_img}"
+
+            # push 偶发会卡在 manifest/收尾：加超时 + 重试
+            for i in 1 2 3 4 5; do
+              echo "==> Push ${dst_img} (attempt ${i})"
+              if timeout 900 docker push "${dst_img}"; then
+                echo "OK: ${dst_img}"
+                return 0
+              fi
+              echo "Retry in $((i*10))s..."
+              sleep $((i*10))
+            done
+
+            echo "FAILED: ${dst_img}"
+            return 1
           }
 
           mirror unclas/maimbot-adapter maimbot-adapter
