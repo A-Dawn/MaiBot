@@ -1,0 +1,34 @@
+name: Mirror Docker Hub latest images to Tencent TCR
+
+on:
+  schedule:
+    - cron: "0 */6 * * *"   # 每 6 小时同步一次 latest
+  workflow_dispatch: {}     # 允许手动点 Run
+
+jobs:
+  mirror:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Login to Tencent TCR
+        run: |
+          echo "${{ secrets.TCR_PASSWORD }}" | docker login ccr.ccs.tencentyun.com \
+            -u "${{ secrets.TCR_USERNAME }}" --password-stdin
+
+      - name: Mirror latest images
+        env:
+          NS: ${{ secrets.TCR_NAMESPACE }}
+        run: |
+          set -e
+
+          mirror () {
+            src="$1"
+            dst="$2"
+            docker pull "$src:latest"
+            docker tag "$src:latest" "ccr.ccs.tencentyun.com/${NS}/${dst}:latest"
+            docker push "ccr.ccs.tencentyun.com/${NS}/${dst}:latest"
+          }
+
+          mirror unclas/maimbot-adapter maimbot-adapter
+          mirror sengokucola/maibot maibot
+          mirror mlikiowa/napcat-docker napcat-docker
+          mirror coleifer/sqlite-web sqlite-web
