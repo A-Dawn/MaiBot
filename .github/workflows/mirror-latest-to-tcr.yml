@@ -1,20 +1,20 @@
-name: Mirror Docker Hub latest images to Tencent TCR (fast parallel)
+name: Mirror Docker Hub latest to Tencent TCR (optimal)
 
 on:
   schedule:
-    - cron: "0 */6 * * *"   # 每 6 小时同步一次
-  workflow_dispatch: {}     # 允许手动 Run
+    - cron: "0 */6 * * *"
+  workflow_dispatch: {}
 
-# 防止同一时间跑两次（手动触发撞上定时）
 concurrency:
   group: mirror-latest-to-tcr
   cancel-in-progress: false
 
 jobs:
-  mirror:
+  # 1) 并行阶段：只拉取并计算上游 digest（快、并行）
+  probe:
+    name: Probe upstream digests (parallel)
     runs-on: ubuntu-latest
-    timeout-minutes: 60
-
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
@@ -28,38 +28,106 @@ jobs:
           - src: coleifer/sqlite-web
             dst: sqlite-web
 
+    outputs:
+      maimbot_adapter: ${{ steps.out.outputs.maimbot_adapter }}
+      maibot: ${{ steps.out.outputs.maibot }}
+      napcat_docker: ${{ steps.out.outputs.napcat_docker }}
+      sqlite_web: ${{ steps.out.outputs.sqlite_web }}
+
+    steps:
+      - name: Pull upstream latest
+        run: |
+          set -euo pipefail
+          timeout 900 docker pull "${{ matrix.src }}:latest"
+
+      - name: Compute upstream digest
+        id: digest
+        run: |
+          set -euo pipefail
+          # RepoDigests like: docker.io/unclas/maimbot-adapter@sha256:...
+          d=$(docker inspect --format='{{index .RepoDigests 0}}' "${{ matrix.src }}:latest" | awk -F@ '{print $2}')
+          echo "digest=$d" >> "$GITHUB_OUTPUT"
+          echo "Upstream digest: $d"
+
+      # 把 matrix 结果汇总到 job outputs（用一个映射）
+      - name: Export digest to job outputs
+        id: out
+        run: |
+          set -euo pipefail
+          src="${{ matrix.src }}"
+          d="${{ steps.digest.outputs.digest }}"
+          case "$src" in
+            "unclas/maimbot-adapter") echo "maimbot_adapter=$d" >> "$GITHUB_OUTPUT" ;;
+            "sengokucola/maibot")     echo "maibot=$d" >> "$GITHUB_OUTPUT" ;;
+            "mlikiowa/napcat-docker") echo "napcat_docker=$d" >> "$GITHUB_OUTPUT" ;;
+            "coleifer/sqlite-web")    echo "sqlite_web=$d" >> "$GITHUB_OUTPUT" ;;
+          esac
+
+  # 2) 串行阶段：按顺序推送到 TCR（最稳，不会 manifest 卡死）
+  push:
+    name: Push to Tencent TCR (serial, skip if same)
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    needs: probe
+
     steps:
       - name: Login to Tencent TCR
         run: |
           echo "${{ secrets.TCR_PASSWORD }}" | docker login ccr.ccs.tencentyun.com \
             -u "${{ secrets.TCR_USERNAME }}" --password-stdin
 
-      - name: Mirror ${{ matrix.src }}:latest -> ${{ matrix.dst }}:latest
+      - name: Mirror (serial)
         env:
           NS: ${{ secrets.TCR_NAMESPACE }}
-          SRC: ${{ matrix.src }}
-          DST: ${{ matrix.dst }}
+          D_ADAPTER: ${{ needs.probe.outputs.maimbot_adapter }}
+          D_MAIBOT: ${{ needs.probe.outputs.maibot }}
+          D_NAPCAT: ${{ needs.probe.outputs.napcat_docker }}
+          D_SQLITE: ${{ needs.probe.outputs.sqlite_web }}
         run: |
           set -euo pipefail
 
-          dst_img="ccr.ccs.tencentyun.com/${NS}/${DST}:latest"
+          # 查询 TCR 上某个 tag 当前 digest（如果不存在就返回空）
+          tcr_digest () {
+            local repo="$1"  # e.g. maibot
+            docker pull "ccr.ccs.tencentyun.com/${NS}/${repo}:latest" >/dev/null 2>&1 || true
+            docker inspect --format='{{index .RepoDigests 0}}' "ccr.ccs.tencentyun.com/${NS}/${repo}:latest" 2>/dev/null | awk -F@ '{print $2}' || true
+          }
 
-          echo "==> Pull ${SRC}:latest"
-          timeout 900 docker pull "${SRC}:latest"
+          mirror_one () {
+            local src="$1"
+            local dst="$2"
+            local upstream_digest="$3"
+            local dst_img="ccr.ccs.tencentyun.com/${NS}/${dst}:latest"
 
-          echo "==> Tag -> ${dst_img}"
-          docker tag "${SRC}:latest" "${dst_img}"
+            echo "==== ${src}:latest -> ${dst_img} ===="
+            echo "Upstream digest: ${upstream_digest}"
 
-          # push 偶发慢：加超时 + 重试
-          for i in 1 2 3 4 5; do
-            echo "==> Push ${dst_img} (attempt ${i})"
-            if timeout 1200 docker push "${dst_img}"; then
-              echo "OK: ${dst_img}"
-              exit 0
+            current="$(tcr_digest "$dst")"
+            echo "TCR digest: ${current:-<none>}"
+
+            if [ -n "${current}" ] && [ "${current}" = "${upstream_digest}" ]; then
+              echo "SKIP (same digest)"
+              return 0
             fi
-            echo "Retry in $((i*10))s..."
-            sleep $((i*10))
-          done
 
-          echo "FAILED: ${dst_img}"
-          exit 1
+            timeout 900 docker pull "${src}:latest"
+            docker tag "${src}:latest" "${dst_img}"
+
+            for i in 1 2 3 4 5; do
+              echo "Push attempt $i..."
+              if timeout 1200 docker push "${dst_img}"; then
+                echo "OK"
+                return 0
+              fi
+              echo "Retry in $((i*10))s..."
+              sleep $((i*10))
+            done
+
+            echo "FAILED: ${dst_img}"
+            return 1
+          }
+
+          mirror_one unclas/maimbot-adapter maimbot-adapter "${D_ADAPTER}"
+          mirror_one sengokucola/maibot maibot "${D_MAIBOT}"
+          mirror_one mlikiowa/napcat-docker napcat-docker "${D_NAPCAT}"
+          mirror_one coleifer/sqlite-web sqlite-web "${D_SQLITE}"
