@@ -54,27 +54,30 @@ class RespNotOkException(Exception):
             return f"未知的异常响应代码：{self.status_code}"
 
 
-class RespParseException(Exception):
-    """响应解析错误，常见于响应格式不正确或解析方法不匹配"""
+class ResponseContextException(Exception):
+    """携带原始响应上下文的异常基类。"""
 
-    def __init__(self, ext_info: Any, message: str | None = None):
+    default_message: str = "请求失败"
+
+    def __init__(self, ext_info: Any = None, message: str | None = None):
         super().__init__(message)
         self.ext_info = ext_info
         self.message = message
 
     def __str__(self):
-        return self.message or "解析响应内容时发生未知错误，请检查是否配置了正确的解析方法"
+        return self.message or self.default_message
 
 
-class EmptyResponseException(Exception):
+class RespParseException(ResponseContextException):
+    """响应解析错误，常见于响应格式不正确或解析方法不匹配"""
+
+    default_message = "解析响应内容时发生未知错误，请检查是否配置了正确的解析方法"
+
+
+class EmptyResponseException(ResponseContextException):
     """响应内容为空"""
 
-    def __init__(self, message: str = "响应内容为空，这可能是一个临时性问题"):
-        super().__init__(message)
-        self.message = message
-
-    def __str__(self):
-        return self.message
+    default_message = "响应内容为空，这可能是一个临时性问题"
 
 
 class ModelAttemptFailed(Exception):
@@ -87,3 +90,23 @@ class ModelAttemptFailed(Exception):
 
     def __str__(self):
         return self.message
+
+
+class LLMTaskTimeoutError(ModelAttemptFailed):
+    """任务级 hard_timeout 触发的异常。
+
+    继承 ModelAttemptFailed 以复用调度器的“切到下一个模型”链路：`_attempt_request_on_model_with_timeout`
+    用 `asyncio.wait_for` 包裹单次模型尝试，超时时取消该次尝试并转抛本异常，由
+    `_execute_request` 内的 `except ModelAttemptFailed` 分支接住，正常完成 penalty +1 /
+    usage_penalty -1 清理后继续尝试任务 model_list 中的其它模型；若所有模型都触发超时，
+    最后一次 LLMTaskTimeoutError 上抛给调用方。
+    """
+
+    def __init__(self, task_name: str, model_name: str, timeout_s: float):
+        super().__init__(
+            f"任务 '{task_name}' 模型 '{model_name}' 触发硬超时 {timeout_s}s",
+            original_exception=None,
+        )
+        self.task_name = task_name
+        self.model_name = model_name
+        self.timeout_s = timeout_s

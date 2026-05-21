@@ -1,50 +1,91 @@
+"""Hello World 示例插件 — 新 SDK 版本
+
+你的第一个 MaiCore 插件，包含问候功能、时间查询等基础示例。
+"""
+
+from datetime import datetime
+from typing import Any
+
 import random
-from typing import List, Tuple, Type, Any, Optional
-from src.plugin_system import (
-    BasePlugin,
-    register_plugin,
-    BaseAction,
-    BaseCommand,
-    BaseTool,
-    ComponentInfo,
-    ActionActivationType,
-    ConfigField,
-    BaseEventHandler,
-    EventType,
-    MaiMessages,
-    ToolParamType,
-    ReplyContentType,
-    emoji_api,
-)
-from src.config.config import global_config
-from src.common.logger import get_logger
+import re
 
-logger = get_logger("hello_world_plugin")
+from maibot_sdk import Action, Command, EventHandler, Field, MaiBotPlugin, PluginConfigBase, Tool
+from maibot_sdk.types import ActivationType, EventType, ToolParameterInfo, ToolParamType
 
 
-class CompareNumbersTool(BaseTool):
-    """比较两个数大小的工具"""
+class PluginSectionConfig(PluginConfigBase):
+    """插件基础配置。"""
 
-    name = "compare_numbers"
-    description = "使用工具 比较两个数的大小，返回较大的数"
-    parameters = [
-        ("num1", ToolParamType.FLOAT, "第一个数字", True, None),
-        ("num2", ToolParamType.FLOAT, "第二个数字", True, None),
-    ]
-    available_for_llm = True
+    __ui_label__ = "插件"
+    __ui_icon__ = "package"
+    __ui_order__ = 0
 
-    async def execute(self, function_args: dict[str, Any]) -> dict[str, Any]:
-        """执行比较两个数的大小
+    enabled: bool = Field(default=False, description="是否启用插件")
+    config_version: str = Field(default="2.0.0", description="配置版本")
 
-        Args:
-            function_args: 工具参数
 
-        Returns:
-            dict: 工具执行结果
-        """
-        num1: int | float = function_args.get("num1")  # type: ignore
-        num2: int | float = function_args.get("num2")  # type: ignore
+class GreetingConfig(PluginConfigBase):
+    """问候配置。"""
 
+    __ui_label__ = "问候"
+    __ui_icon__ = "message-circle"
+    __ui_order__ = 1
+
+    message: str = Field(default="嗨！很开心见到你！😊", description="默认问候消息")
+
+
+class TimeConfig(PluginConfigBase):
+    """时间查询配置。"""
+
+    __ui_label__ = "时间"
+    __ui_icon__ = "clock"
+    __ui_order__ = 2
+
+    format: str = Field(default="%Y-%m-%d %H:%M:%S", description="时间显示格式")
+
+
+class PrintMessageConfig(PluginConfigBase):
+    """消息打印配置。"""
+
+    __ui_label__ = "消息打印"
+    __ui_icon__ = "terminal"
+    __ui_order__ = 3
+
+    enabled: bool = Field(default=False, description="是否打印接收到的消息")
+
+
+class HelloWorldPluginConfig(PluginConfigBase):
+    """Hello World 示例插件配置。"""
+
+    plugin: PluginSectionConfig = Field(default_factory=PluginSectionConfig)
+    greeting: GreetingConfig = Field(default_factory=GreetingConfig)
+    time: TimeConfig = Field(default_factory=TimeConfig)
+    print_message: PrintMessageConfig = Field(default_factory=PrintMessageConfig)
+
+
+class HelloWorldPlugin(MaiBotPlugin):
+    """Hello World 示例插件"""
+
+    config_model = HelloWorldPluginConfig
+
+    async def on_load(self) -> None:
+        """处理插件加载。"""
+
+    async def on_unload(self) -> None:
+        """处理插件卸载。"""
+
+    # ===== Tool 组件 =====
+
+    @Tool(
+        "compare_numbers",
+        description="使用工具比较两个数的大小，返回较大的数",
+        parameters=[
+            ToolParameterInfo(name="num1", param_type=ToolParamType.FLOAT, description="第一个数字", required=True),
+            ToolParameterInfo(name="num2", param_type=ToolParamType.FLOAT, description="第二个数字", required=True),
+        ],
+    )
+    async def handle_compare_numbers(self, num1: float = 0, num2: float = 0, **kwargs):
+        """比较两个数的大小"""
         try:
             if num1 > num2:
                 result = f"{num1} 大于 {num2}"
@@ -52,270 +93,184 @@ class CompareNumbersTool(BaseTool):
                 result = f"{num1} 小于 {num2}"
             else:
                 result = f"{num1} 等于 {num2}"
-
-            return {"name": self.name, "content": result}
+            return {"name": "compare_numbers", "content": result}
         except Exception as e:
-            return {"name": self.name, "content": f"比较数字失败，炸了: {str(e)}"}
+            return {"name": "compare_numbers", "content": f"比较数字失败，炸了: {e}"}
 
+    # ===== Action 组件 =====
 
-# ===== Action组件 =====
-class HelloAction(BaseAction):
-    """问候Action - 简单的问候动作"""
+    @Action(
+        "hello_greeting",
+        description="向用户发送问候消息",
+        activation_type=ActivationType.ALWAYS,
+        action_parameters={"greeting_message": "要发送的问候消息"},
+        action_require=["需要发送友好问候时使用", "当有人向你问好时使用", "当你遇见没有见过的人时使用"],
+        associated_types=["text"],
+    )
+    async def handle_hello(self, stream_id: str = "", greeting_message: str = "", **kwargs):
+        """问候动作"""
+        del kwargs
 
-    # === 基本信息（必须填写）===
-    action_name = "hello_greeting"
-    action_description = "向用户发送问候消息"
-    activation_type = ActionActivationType.ALWAYS  # 始终激活
-
-    # === 功能描述（必须填写）===
-    action_parameters = {"greeting_message": "要发送的问候消息"}
-    action_require = ["需要发送友好问候时使用", "当有人向你问好时使用", "当你遇见没有见过的人时使用"]
-    associated_types = ["text"]
-
-    async def execute(self) -> Tuple[bool, str]:
-        """执行问候动作 - 这是核心功能"""
-        # 发送问候消息
-        greeting_message = self.action_data.get("greeting_message", "")
-        base_message = self.get_config("greeting.message", "嗨！很开心见到你！😊")
+        base_message = self.config.greeting.message
         message = base_message + greeting_message
-        await self.send_text(message)
-
+        await self.ctx.send.text(message, stream_id)
         return True, "发送了问候消息"
 
-
-class ByeAction(BaseAction):
-    """告别Action - 只在用户说再见时激活"""
-
-    action_name = "bye_greeting"
-    action_description = "向用户发送告别消息"
-
-    # 使用关键词激活
-    activation_type = ActionActivationType.KEYWORD
-
-    # 关键词设置
-    activation_keywords = ["再见", "bye", "88", "拜拜"]
-    keyword_case_sensitive = False
-
-    action_parameters = {"bye_message": "要发送的告别消息"}
-    action_require = [
-        "用户要告别时使用",
-        "当有人要离开时使用",
-        "当有人和你说再见时使用",
-    ]
-    associated_types = ["text"]
-
-    async def execute(self) -> Tuple[bool, str]:
-        bye_message = self.action_data.get("bye_message", "")
+    @Action(
+        "bye_greeting",
+        description="向用户发送告别消息",
+        activation_type=ActivationType.KEYWORD,
+        activation_keywords=["再见", "bye", "88", "拜拜"],
+        action_parameters={"bye_message": "要发送的告别消息"},
+        action_require=["用户要告别时使用", "当有人要离开时使用", "当有人和你说再见时使用"],
+        associated_types=["text"],
+    )
+    async def handle_bye(self, stream_id: str = "", bye_message: str = "", **kwargs):
+        """告别动作"""
+        del kwargs
 
         message = f"再见！期待下次聊天！👋{bye_message}"
-        await self.send_text(message)
+        await self.ctx.send.text(message, stream_id)
         return True, "发送了告别消息"
 
+    # ===== Command 组件 =====
 
-class TimeCommand(BaseCommand):
-    """时间查询Command - 响应/time命令"""
+    @Command("time", description="查询当前时间", pattern=r"^/time$")
+    async def handle_time(self, stream_id: str = "", **kwargs):
+        """时间查询命令"""
+        del kwargs
 
-    command_name = "time"
-    command_description = "查询当前时间"
-
-    # === 命令设置（必须填写）===
-    command_pattern = r"^/time$"  # 精确匹配 "/time" 命令
-
-    async def execute(self) -> Tuple[bool, str, bool]:
-        """执行时间查询"""
-        import datetime
-
-        # 获取当前时间
-        time_format: str = self.get_config("time.format", "%Y-%m-%d %H:%M:%S")  # type: ignore
-        now = datetime.datetime.now()
+        time_format = self.config.time.format
+        now = datetime.now()
         time_str = now.strftime(time_format)
-
-        # 发送时间信息
-        message = f"⏰ 当前时间：{time_str}"
-        await self.send_text(message)
-
+        await self.ctx.send.text(f"⏰ 当前时间：{time_str}", stream_id)
         return True, f"显示了当前时间: {time_str}", True
 
+    @Command("random_emojis", description="发送多张随机表情包", pattern=r"^/random_emojis$")
+    async def handle_random_emojis(self, stream_id: str = "", **kwargs):
+        """发送多张随机表情包"""
+        del kwargs
 
-class PrintMessage(BaseEventHandler):
-    """打印消息事件处理器 - 处理打印消息事件"""
-
-    event_type = EventType.ON_MESSAGE
-    handler_name = "print_message_handler"
-    handler_description = "打印接收到的消息"
-
-    async def execute(self, message: MaiMessages | None) -> Tuple[bool, bool, str | None, None, None]:
-        """执行打印消息事件处理"""
-        # 打印接收到的消息
-        if self.get_config("print_message.enabled", False):
-            print(f"接收到消息: {message.raw_message if message else '无效消息'}")
-        return True, True, "消息已打印", None, None
-
-
-class ForwardMessages(BaseEventHandler):
-    """
-    把接收到的消息转发到指定聊天ID
-
-    此组件是HYBRID消息和FORWARD消息的使用示例。
-    每收到10条消息，就会以1%的概率使用HYBRID消息转发，否则使用FORWARD消息转发。
-    """
-
-    event_type = EventType.ON_MESSAGE
-    handler_name = "forward_messages_handler"
-    handler_description = "把接收到的消息转发到指定聊天ID"
-
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self.counter = 0  # 用于计数转发的消息数量
-        self.messages: List[str] = []
-
-    async def execute(self, message: MaiMessages | None) -> Tuple[bool, bool, None, None, None]:
-        if not message:
-            return True, True, None, None, None
-        stream_id = message.stream_id or ""
-
-        if message.plain_text:
-            self.messages.append(message.plain_text)
-            self.counter += 1
-        if self.counter % 10 == 0:
-            if random.random() < 0.01:
-                success = await self.send_hybrid(stream_id, [(ReplyContentType.TEXT, msg) for msg in self.messages])
-            else:
-                success = await self.send_forward(
-                    stream_id,
-                    [
-                        (
-                            str(global_config.bot.qq_account),
-                            str(global_config.bot.nickname),
-                            [(ReplyContentType.TEXT, msg)],
-                        )
-                        for msg in self.messages
-                    ],
-                )
-            if not success:
-                raise ValueError("转发消息失败")
-            self.messages = []
-        return True, True, None, None, None
-
-
-class RandomEmojis(BaseCommand):
-    command_name = "random_emojis"
-    command_description = "发送多张随机表情包"
-    command_pattern = r"^/random_emojis$"
-
-    async def execute(self):
-        emojis = await emoji_api.get_random(5)
+        emojis = await self.ctx.emoji.get_random(5)
         if not emojis:
             return False, "未找到表情包", False
-        emoji_base64_list = []
-        for emoji in emojis:
-            emoji_base64_list.append(emoji[0])
-        return await self.forward_images(emoji_base64_list)
-
-    async def forward_images(self, images: List[str]):
-        """
-        把多张图片用合并转发的方式发给用户
-        """
-        success = await self.send_forward([("0", "神秘用户", [(ReplyContentType.IMAGE, img)]) for img in images])
-        return (True, "已发送随机表情包", True) if success else (False, "发送随机表情包失败", False)
-
-
-class TestCommand(BaseCommand):
-    """响应/test命令"""
-
-    command_name = "test"
-    command_description = "测试命令"
-    command_pattern = r"^/test$"
-
-    async def execute(self) -> Tuple[bool, Optional[str], int]:
-        """执行测试命令"""
-        try:
-            from src.plugin_system.apis import generator_api
-
-            reply_reason = "这是一条测试消息。"
-            logger.info(f"测试命令:{reply_reason}")
-            result_status, data = await generator_api.generate_reply(
-                chat_stream=self.message.chat_stream,
-                reply_reason=reply_reason,
-                enable_chinese_typo=False,
-                extra_info=f"{reply_reason}用于测试bot的功能是否正常。请你按设定的人设表达一句\"测试正常\"",
-            )
-            if result_status:
-                # 发送生成的回复
-                if data and data.reply_set and data.reply_set.reply_data:
-                    for reply_seg in data.reply_set.reply_data:
-                        send_data = reply_seg.content
-                        await self.send_text(send_data, storage_message=True)
-                        logger.info(f"已回复: {send_data}")
-                return True, "", 1
-        except Exception as e:
-            logger.error(f"表达器生成失败:{e}")
-        return True, "", 1
-
-
-# ===== 插件注册 =====
-
-
-@register_plugin
-class HelloWorldPlugin(BasePlugin):
-    """Hello World插件 - 你的第一个MaiCore插件"""
-
-    # 插件基本信息
-    plugin_name: str = "hello_world_plugin"  # 内部标识符
-    enable_plugin: bool = False
-    dependencies: List[str] = []  # 插件依赖列表
-    python_dependencies: List[str] = []  # Python包依赖列表
-    config_file_name: str = "config.toml"  # 配置文件名
-
-    # 配置节描述
-    config_section_descriptions = {"plugin": "插件基本信息", "greeting": "问候功能配置", "time": "时间查询配置"}
-
-    # 配置Schema定义
-    config_schema: dict = {
-        "plugin": {
-            "config_version": ConfigField(type=str, default="1.0.0", description="配置文件版本"),
-            "enabled": ConfigField(type=bool, default=False, description="是否启用插件"),
-        },
-        "greeting": {
-            "message": ConfigField(
-                type=list, default=["嗨！很开心见到你！😊", "Ciallo～(∠・ω< )⌒★"], description="默认问候消息"
-            ),
-            "enable_emoji": ConfigField(type=bool, default=True, description="是否启用表情符号"),
-        },
-        "time": {"format": ConfigField(type=str, default="%Y-%m-%d %H:%M:%S", description="时间显示格式")},
-        "print_message": {"enabled": ConfigField(type=bool, default=True, description="是否启用打印")},
-    }
-
-    def get_plugin_components(self) -> List[Tuple[ComponentInfo, Type]]:
-        return [
-            (HelloAction.get_action_info(), HelloAction),
-            (CompareNumbersTool.get_tool_info(), CompareNumbersTool),  # 添加比较数字工具
-            (ByeAction.get_action_info(), ByeAction),  # 添加告别Action
-            (TimeCommand.get_command_info(), TimeCommand),
-            (PrintMessage.get_handler_info(), PrintMessage),
-            (ForwardMessages.get_handler_info(), ForwardMessages),
-            (RandomEmojis.get_command_info(), RandomEmojis),
-            (TestCommand.get_command_info(), TestCommand),
+        # 用转发消息发送多张图片
+        messages = [
+            {"user_id": "0", "nickname": "神秘用户", "segments": [{"type": "image", "content": e.get("base64", "")}]}
+            for e in emojis
         ]
+        await self.ctx.send.forward(messages, stream_id)
+        return True, "已发送随机表情包", True
+
+    @Command("test", description="测试命令", pattern=r"^/test$")
+    async def handle_test(self, stream_id: str = "", **kwargs):
+        """测试命令 — 发送简单测试消息"""
+        del kwargs
+
+        await self.ctx.send.text("测试正常！Bot 功能运行中 ✅", stream_id)
+        return True, "测试完成", True
+
+    @Command(
+        "send_to",
+        description="向指定聊天流发送文本",
+        pattern=r"^/send_to\s+(?P<target_stream_id>\S+)\s+(?P<text>.+)$",
+    )
+    async def handle_send_to(self, stream_id: str = "", **kwargs: Any):
+        """向指定聊天流发送文本。"""
+
+        matched_groups = kwargs.get("matched_groups")
+        if not isinstance(matched_groups, dict):
+            matched_groups = {}
+
+        target_stream_id = str(matched_groups.get("target_stream_id") or "").strip()
+        text = str(matched_groups.get("text") or "").strip()
+        if not target_stream_id or not text:
+            raw_text = str(kwargs.get("text") or "").strip()
+            match = re.match(r"^/send_to\s+(?P<target_stream_id>\S+)\s+(?P<text>.+)$", raw_text, re.DOTALL)
+            if match is not None:
+                target_stream_id = match.group("target_stream_id").strip()
+                text = match.group("text").strip()
+
+        if not target_stream_id:
+            return False, "用法：/send_to <stream_id> <要发送的文本>", True
+
+        if not text:
+            return False, "要发送的文本不能为空", True
+
+        sent = await self.ctx.send.text(text, target_stream_id)
+        if not sent:
+            return False, f"发送失败：聊天流不存在或不可发送，stream_id={target_stream_id}", True
+
+        if stream_id and stream_id != target_stream_id:
+            await self.ctx.send.text(f"已向 {target_stream_id} 发送文本", stream_id)
+        return True, f"已向 {target_stream_id} 发送文本", True
+
+    # ===== EventHandler 组件 =====
+
+    @EventHandler("print_message_handler", description="打印接收到的消息", event_type=EventType.ON_MESSAGE)
+    async def handle_print_message(self, message: Any = None, **kwargs: Any):
+        """打印消息事件"""
+        del kwargs
+
+        if self.config.print_message.enabled and message:
+            raw = message.get("raw_message", "") if isinstance(message, dict) else str(message)
+            print(f"接收到消息: {raw}")
+        return True, True, "消息已打印", None, None
+
+    @EventHandler(
+        "forward_messages_handler", description="把接收到的消息转发到指定聊天ID", event_type=EventType.ON_MESSAGE
+    )
+    async def handle_forward_messages(self, message: Any = None, stream_id: str = "", **kwargs: Any):
+        """收集消息并定期转发"""
+        del kwargs
+
+        if not message:
+            return True, True, None, None, None
+        plain_text = message.get("plain_text", "") if isinstance(message, dict) else ""
+        if not plain_text:
+            return True, True, None, None, None
+
+        # 使用插件级状态收集消息
+        if not hasattr(self, "_fwd_messages"):
+            self._fwd_messages: list[str] = []
+            self._fwd_counter: int = 0
+
+        self._fwd_messages.append(plain_text)
+        self._fwd_counter += 1
+
+        if self._fwd_counter % 10 == 0 and stream_id:
+            if random.random() < 0.01:
+                segments = [{"type": "text", "content": msg} for msg in self._fwd_messages]
+                await self.ctx.send.hybrid(segments, stream_id)
+            else:
+                messages = [
+                    {"user_id": "0", "nickname": "转发", "segments": [{"type": "text", "content": msg}]}
+                    for msg in self._fwd_messages
+                ]
+                await self.ctx.send.forward(messages, stream_id)
+            self._fwd_messages = []
+
+        return True, True, None, None, None
+
+    async def on_config_update(self, scope: str, config_data: dict[str, object], version: str) -> None:
+        """处理配置热重载事件。
+
+        Args:
+            scope: 配置变更范围。
+            config_data: 最新配置数据。
+            version: 配置版本号。
+        """
+
+        del scope
+        del config_data
+        del version
 
 
-# @register_plugin
-# class HelloWorldEventPlugin(BaseEPlugin):
-#     """Hello World事件插件 - 处理问候和告别事件"""
+def create_plugin() -> HelloWorldPlugin:
+    """创建 Hello World 示例插件实例。
 
-#     plugin_name = "hello_world_event_plugin"
-#     enable_plugin = False
-#     dependencies = []
-#     python_dependencies = []
-#     config_file_name = "event_config.toml"
+    Returns:
+        HelloWorldPlugin: 新的示例插件实例。
+    """
 
-#     config_schema = {
-#         "plugin": {
-#             "name": ConfigField(type=str, default="hello_world_event_plugin", description="插件名称"),
-#             "version": ConfigField(type=str, default="1.0.0", description="插件版本"),
-#             "enabled": ConfigField(type=bool, default=True, description="是否启用插件"),
-#         },
-#     }
-
-#     def get_plugin_components(self) -> List[Tuple[ComponentInfo, Type]]:
-#         return [(PrintMessage.get_handler_info(), PrintMessage)]
+    return HelloWorldPlugin()
