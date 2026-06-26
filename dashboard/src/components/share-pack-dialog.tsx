@@ -17,6 +17,7 @@ import {
   Info,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import { ThinkingIllustration } from '@/components/ui/thinking-illustration'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
@@ -56,7 +57,6 @@ const TASK_TYPE_NAMES: Record<string, string> = {
   embedding: '向量嵌入',
   lpmm_entity_extract: '实体提取',
   lpmm_rdf_build: 'RDF构建',
-  lpmm_qa: '问答模型',
 }
 
 // 预设标签
@@ -356,8 +356,7 @@ export function SharePackDialog({ trigger }: SharePackDialogProps) {
         <DialogBody>
           {loading ? (
             <div className="py-8 text-center">
-              <Loader2 className="w-8 h-8 mx-auto animate-spin text-primary" />
-              <p className="mt-4 text-muted-foreground">Thinking...</p>
+              <ThinkingIllustration size="lg" className="mx-auto" />
             </div>
           ) : (
             <>

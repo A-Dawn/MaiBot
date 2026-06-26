@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { ChevronDown, Loader2, Play, RefreshCw, RotateCcw, Search } from 'lucide-react'
+import { ChevronDown, Play, RefreshCw, RotateCcw, Search } from 'lucide-react'
 
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
@@ -11,6 +11,7 @@ import { Label } from '@/components/ui/label'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Textarea } from '@/components/ui/textarea'
+import { ThinkingIllustration } from '@/components/ui/thinking-illustration'
 import { useToast } from '@/hooks/use-toast'
 import {
   getMemoryEpisode,
@@ -69,6 +70,10 @@ function getEpisodeTitle(item: MemoryEpisodeItemPayload): string {
   return String(item.title ?? item.summary ?? item.content ?? getEpisodeId(item) ?? '未命名 Episode')
 }
 
+function formatTimestampInput(timestamp?: number): string {
+  return typeof timestamp === 'number' && Number.isFinite(timestamp) ? String(Math.floor(timestamp)) : ''
+}
+
 function getEpisodeParagraphs(
   item: MemoryEpisodeItemPayload | MemoryEpisodeDetailPayload['episode'] | null | undefined,
 ): MemoryEpisodeParagraphPayload[] {
@@ -85,7 +90,19 @@ function getStatusCount(status: MemoryEpisodeStatusPayload | null, key: string):
   return typeof value === 'number' ? value : 0
 }
 
-export function MemoryEpisodeManager() {
+export interface MemoryEpisodeManagerProps {
+  initialEpisodeId?: string
+  initialSource?: string
+  initialTimeStart?: number
+  initialTimeEnd?: number
+}
+
+export function MemoryEpisodeManager({
+  initialEpisodeId = '',
+  initialSource = '',
+  initialTimeStart,
+  initialTimeEnd,
+}: MemoryEpisodeManagerProps) {
   const { toast } = useToast()
   const [query, setQuery] = useState('')
   const [source, setSource] = useState('')
@@ -110,6 +127,8 @@ export function MemoryEpisodeManager() {
   const [pendingLimit, setPendingLimit] = useState('20')
   const [pendingMaxRetry, setPendingMaxRetry] = useState('3')
   const initialLoadedRef = useRef(false)
+  const initialTargetKeyRef = useRef('')
+  const pendingInitialTargetRef = useRef<{ source: string; timeStart: string; timeEnd: string } | null>(null)
 
   const selectedEpisode = useMemo(() => detail?.episode ?? items.find((item) => getEpisodeId(item) === selectedId), [detail?.episode, items, selectedId])
   const selectedEpisodeParagraphs = useMemo(() => getEpisodeParagraphs(selectedEpisode), [selectedEpisode])
@@ -180,6 +199,52 @@ export function MemoryEpisodeManager() {
     initialLoadedRef.current = true
     void loadEpisodes()
   }, [loadEpisodes])
+
+  useEffect(() => {
+    const targetKey = [initialEpisodeId, initialSource, initialTimeStart, initialTimeEnd].join('|')
+    if (!initialEpisodeId && !initialSource && initialTimeStart === undefined && initialTimeEnd === undefined) {
+      return
+    }
+    if (targetKey === initialTargetKeyRef.current) {
+      return
+    }
+    initialTargetKeyRef.current = targetKey
+    const nextTimeStart = formatTimestampInput(initialTimeStart)
+    const nextTimeEnd = formatTimestampInput(initialTimeEnd)
+    pendingInitialTargetRef.current = {
+      source: initialSource,
+      timeStart: nextTimeStart,
+      timeEnd: nextTimeEnd,
+    }
+    if (initialSource) {
+      setSource(initialSource)
+    }
+    if (initialTimeStart !== undefined) {
+      setTimeStart(nextTimeStart)
+    }
+    if (initialTimeEnd !== undefined) {
+      setTimeEnd(nextTimeEnd)
+    }
+    if (initialEpisodeId) {
+      setSelectedId(initialEpisodeId)
+    }
+  }, [initialEpisodeId, initialSource, initialTimeEnd, initialTimeStart])
+
+  useEffect(() => {
+    const pendingTarget = pendingInitialTargetRef.current
+    if (!pendingTarget) {
+      return
+    }
+    if (
+      (pendingTarget.source && source !== pendingTarget.source)
+      || (pendingTarget.timeStart && timeStart !== pendingTarget.timeStart)
+      || (pendingTarget.timeEnd && timeEnd !== pendingTarget.timeEnd)
+    ) {
+      return
+    }
+    pendingInitialTargetRef.current = null
+    void loadEpisodes()
+  }, [loadEpisodes, source, timeEnd, timeStart])
 
   useEffect(() => {
     if (selectedId) {
@@ -330,7 +395,7 @@ export function MemoryEpisodeManager() {
               刷新 Episode
             </Button>
 
-            <ScrollArea className="h-[420px] rounded-lg border">
+            <ScrollArea className="h-[420px]">
               <Table>
                 <TableHeader className="sticky top-0 bg-background">
                   <TableRow>
@@ -365,7 +430,7 @@ export function MemoryEpisodeManager() {
                   }) : (
                     <TableRow>
                       <TableCell colSpan={3} className="text-center text-muted-foreground">
-                        {loading ? 'Thinking...' : '没有匹配的 Episode'}
+                        {loading ? <ThinkingIllustration size="sm" className="mx-auto" /> : '没有匹配的 Episode'}
                       </TableCell>
                     </TableRow>
                   )}
@@ -384,8 +449,7 @@ export function MemoryEpisodeManager() {
             <CardContent className="space-y-4">
               {detailLoading ? (
                 <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                  Thinking
+                  <ThinkingIllustration size="sm" />
                 </div>
               ) : selectedEpisode ? (
                 <>

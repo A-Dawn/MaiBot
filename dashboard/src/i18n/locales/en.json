@@ -2,6 +2,8 @@
   "header": {
     "collapseSidebar": "Collapse sidebar",
     "expandSidebar": "Expand sidebar",
+    "collapseTopbar": "Collapse topbar",
+    "expandTopbar": "Expand topbar",
     "toggleConnection": "Toggle backend connection",
     "viewAnnualSummary": "View annual summary",
     "annualSummary": "2025 Annual Summary",
@@ -12,6 +14,8 @@
     "switchToDark": "Switch to dark mode",
     "logout": "Log out",
     "logoutLabel": "Logout",
+    "switchLanguage": "Switch language",
+    "moreActions": "More actions",
     "notConnected": "Not connected"
   },
   "sidebar": {
@@ -28,10 +32,11 @@
       "aiModelProvider": "AI Model Providers",
       "modelManagement": "Model Management",
       "promptManagement": "Prompt Management",
-      "adapterConfig": "Adapter Config",
+      "promptGenerator": "Persona Generator (Experimental)",
       "emojiManagement": "Emoji Management",
       "expressionManagement": "Expression Management",
       "slangManagement": "Slang Management",
+      "behaviorLearning": "Behavior Learning",
       "personInfo": "Person Info",
       "knowledgeGraph": "Long-Term Memory Graph",
       "knowledgeBase": "Long-Term Memory",
@@ -42,6 +47,7 @@
       "logViewer": "Log Viewer",
       "reasoningProcess": "Reasoning Process",
       "maisakaMonitor": "MaiSaka Chat Monitor",
+      "chatManagement": "Chat Management",
       "localChat": "Local Chat",
       "settings": "Settings"
     }
@@ -49,10 +55,10 @@
   "workspace": {
     "switcherLabel": "Switch MaiBot workspace",
     "settings": "Mai Settings",
-    "chat": "Mai Chat"
+    "chat": "Mai Chat",
+    "logs": "Mai Logs"
   },
   "chat": {
-    "defaultTab": "WebUI",
     "botNameFallback": "Mai",
     "userFallback": "User",
     "userNameFallback": "WebUI User",
@@ -85,7 +91,7 @@
       "empty": "Start chatting with {{bot}}!",
       "emptyHint": "Type a message below and press Enter to send",
       "errorFallback": "An error occurred",
-      "thinking": "Thinking..."
+      "thinking": "Loading..."
     },
     "composer": {
       "hint": "Enter to send · Shift + Enter for newline"
@@ -100,7 +106,6 @@
       "offline": "Offline",
       "subtitle": "{{count}} conversations",
       "title": "Chats",
-      "webuiBadge": "WebUI",
       "virtualBadge": "Virtual",
       "profileTitle": "My identity",
       "editName": "Edit nickname",
@@ -112,7 +117,7 @@
       "groupName": "Virtual group name (optional)",
       "groupNameHint": "MaiBot will treat this as a group chat with this name",
       "knownUserSuffix": " · Known",
-      "loading": "Thinking...",
+      "loading": "Loading...",
       "noUsers": "No users found",
       "personCount": "({{count}} people)",
       "platform": "Select platform",
@@ -229,8 +234,6 @@
       "resetSuccessDesc": "Theme has been reset to default",
       "enableAnimations": "Enable Animations",
       "enableAnimationsDesc": "Disabling this will turn off all transition animations and effects, improving performance",
-      "loginWavesBackground": "Login Page Wave Background",
-      "loginWavesBackgroundDesc": "Disabling this will use a solid color background on the login page, suitable for low-performance devices",
       "inheritParentBg": "Inherit Parent Background",
       "inheritParentBgDesc": "When enabled, uses the background config from the parent layer",
       "fontFamilyLabel": "Font Family",
@@ -255,8 +258,6 @@
       "shadowXl": "Extra Large",
       "blurLabel": "Blur Effect",
       "sidebarWidthLabel": "Sidebar Width",
-      "maxContentWidth": "Max Content Width",
-      "spacingUnit": "Spacing Unit",
       "animationSpeedLabel": "Animation Speed",
       "animationSpeedPlaceholder": "Select animation speed",
       "animationFast": "Fast (100ms)",
@@ -337,6 +338,9 @@
       "securityTip6": "System-generated Tokens are recommended for maximum security"
     },
     "other": {
+      "display": "Display",
+      "enableAvatarFetch": "Fetch and show user avatars",
+      "enableAvatarFetchDesc": "When disabled, chat and reasoning views stop requesting avatar images and use default avatars.",
       "performance": "Performance & Storage",
       "localStorage": "Local Storage Usage",
       "logCache": "Log Cache Size",
@@ -443,6 +447,9 @@
         "radix": "Unstyled accessible component primitives",
         "tailwind": "Utility-first CSS framework",
         "lucide": "Beautiful icon library",
+        "iconifyReact": "Unified icon rendering component",
+        "streamlineSharp": "Sharp icon set designed by Streamline, provided via Iconify, licensed under CC BY 4.0 with attribution retained",
+        "streamlineBlock": "Block icon set designed by Streamline, provided via Iconify, licensed under CC BY 4.0 with attribution retained",
         "tanstackRouter": "Type-safe routing library",
         "zustand": "Lightweight state management",
         "reactHookForm": "High-performance form library",
@@ -491,11 +498,6 @@
     "securityTipTitle": "Security Notice",
     "securityTip1": "Keep your Token safe and never share it with others",
     "securityTip2": "To reset the Token, go to System Settings after logging in",
-    "slowLink": "The interface feels laggy. What can I do?",
-    "disableAnimTitle": "Disable Background Animation",
-    "disableAnimDesc": "Background animation may cause lag on low-performance devices. Disabling it can significantly improve smoothness.",
-    "disableAnimDetail": "After disabling, the background will be a solid color, but all features remain fully functional. You can re-enable it anytime in System Settings.",
-    "disableAnimBtn": "Disable Animation",
     "verifyFailed": "Token verification failed. Please check and try again.",
     "connFailed": "Failed to connect to the server. Please check your network connection.",
     "switchToLight": "Switch to light mode",
@@ -503,6 +505,10 @@
   },
   "setupPage": {
     "steps": {
+      "botProfile": {
+        "title": "Basics & Personality",
+        "description": "Configure nickname, personality, and reply style"
+      },
       "botBasic": {
         "title": "Bot Basics",
         "description": "Configure the bot's basic information"
@@ -521,7 +527,7 @@
       }
     },
     "loading": {
-      "title": "Thinking...",
+      "title": "Loading...",
       "description": "Reading existing configuration"
     },
     "header": {
@@ -550,7 +556,7 @@
       "saveFailedTitle": "Save failed",
       "validationFailedTitle": "Validation failed",
       "completeSuccessTitle": "Setup complete",
-      "completeSuccessDescription": "{{appName}} is restarting to apply the new configuration...",
+      "completeSuccessDescription": "{{appName}} configuration has been saved and applied.",
       "completeFailedTitle": "Setup failed",
       "skipFailedTitle": "Failed to skip the setup wizard",
       "unknownError": "Unknown error"
@@ -635,11 +641,11 @@
         "multipleReplyStyle": {
           "label": "Alternate Reply Styles",
           "placeholder": "Enter one alternate reply style per line",
-          "description": "When this list is not empty, MaiBot may randomly replace the default reply style using the probability below"
+          "description": "When this list is not empty, MaiBot may randomly inject one of these styles as a one-time reply hint"
         },
         "multipleProbability": {
-          "label": "Alternate Style Probability",
-          "description": "The chance of randomly replacing the default reply style each time a reply is built"
+          "label": "Temporary Style Injection Probability",
+          "description": "The chance of injecting a one-time alternate style hint each time a reply is built"
         }
       },
       "emoji": {
@@ -720,7 +726,7 @@
     }
   },
   "common": {
-    "loading": "Thinking...",
+    "loading": "Loading...",
     "error": "Error",
     "retry": "Retry",
     "save": "Save",
@@ -784,10 +790,9 @@
       "homeDesc": "View dashboard overview",
       "botConfig": "Bot Main Config",
       "botConfigDesc": "Configure bot core settings",
-      "modelProvider": "Model Provider Config",
-      "modelProviderDesc": "Configure model providers",
       "model": "Model Config",
       "modelDesc": "Configure model parameters",
+      "promptGeneratorDesc": "Generate injectable persona config blocks from text",
       "emoji": "Emoji Management",
       "emojiDesc": "Manage bot emoji",
       "expression": "Expression Management",
@@ -796,6 +801,7 @@
       "personDesc": "Manage person info",
       "jargon": "Slang Management",
       "jargonDesc": "Manage bot learned slang and jargon",
+      "behaviorLearningDesc": "Browse behavior experience paths and retrieval hits",
       "statistics": "Statistics",
       "statisticsDesc": "View usage statistics",
       "plugins": "Plugin Market",
@@ -816,8 +822,8 @@
   "home": {
     "title": "Live Monitor",
     "subtitle": "MaiBot runtime status and statistics overview",
-    "loading": "Thinking...",
-    "loadingHint": "Thinking...",
+    "loading": "Loading...",
+    "loadingHint": "Loading...",
     "timeRange": {
       "24h": "24 Hours",
       "7d": "7 Days",
@@ -826,9 +832,29 @@
     "autoRefresh": "Auto Refresh",
     "botStatus": {
       "title": "MaiBot Status",
+      "loading": "Reading",
       "running": "Running",
       "stopped": "Stopped",
-      "uptime": "Up {{time}}"
+      "unknown": "Unknown",
+      "uptime": "Up {{time}}",
+      "visualEnabled": "Vision enabled",
+      "memoryEnabled": "Memory enabled"
+    },
+    "versionCard": {
+      "title": "MaiBot Version",
+      "mainVersion": "Core version",
+      "webuiVersion": "WebUI version",
+      "latestVersion": "Latest version",
+      "stableLatest": "Latest stable",
+      "testLatest": "Latest test",
+      "githubReleases": "GitHub Releases",
+      "unknown": "Unknown"
+    },
+    "platformGuide": {
+      "title": "Add a Platform Account",
+      "description": "No account has been configured for connecting MaiBot to a messaging platform.",
+      "detail": "Add a platform and account so MaiBot can receive and send messages through QQ or another messaging app.",
+      "action": "Add Platform Account"
     },
     "quickActions": {
       "title": "Quick Actions",
@@ -837,7 +863,63 @@
       "expressionReview": "Expression Review",
       "viewLogs": "View Logs",
       "pluginManage": "Plugins",
-      "systemSettings": "Settings"
+      "systemSettings": "Settings",
+      "pluginConfig": "Plugin Config",
+      "appearanceSettings": "Appearance",
+      "localCache": "Local Cache",
+      "modelProviders": "Model Providers",
+      "modelList": "Model List",
+      "modelTasks": "Model Tasks",
+      "botConfig": "Core Config",
+      "emojiManagement": "Emoji Management",
+      "expressionManagement": "Expression Management",
+      "statistics": "Detailed Statistics",
+      "customize": "Customize",
+      "empty": "No quick shortcuts selected yet",
+      "add": "Add Shortcut",
+      "descriptions": {
+        "restart": "Restart the MaiBot core process",
+        "expressionReview": "Open the expression learning review dialog",
+        "viewLogs": "View WebUI logs",
+        "pluginManage": "Open the plugin marketplace and management page",
+        "systemSettings": "Open system settings",
+        "pluginConfig": "Open installed plugin configuration",
+        "appearanceSettings": "Open Settings / Appearance",
+        "localCache": "Open Settings / Local Cache",
+        "modelProviders": "Open Model Management / Providers",
+        "modelList": "Open Model Management / Models",
+        "modelTasks": "Open Model Management / Task assignments",
+        "botConfig": "Open MaiBot core configuration",
+        "emojiManagement": "Open emoji resource management",
+        "expressionManagement": "Open expression management",
+        "statistics": "Open maibot_statistics.html"
+      },
+      "categories": {
+        "system": "System",
+        "config": "Config",
+        "resource": "Resource",
+        "plugin": "Plugin",
+        "monitor": "Monitor",
+        "external": "External"
+      },
+      "dialog": {
+        "title": "Customize Quick Shortcuts",
+        "description": "Choose the shortcuts shown on the home quick actions card, including page tabs and plugin configuration pages.",
+        "searchPlaceholder": "Search shortcuts, plugins, or tabs...",
+        "loadingPluginEntries": "Loading plugin shortcuts...",
+        "noMatches": "No matching shortcuts found",
+        "restoreDefault": "Restore Defaults",
+        "done": "Done"
+      }
+    },
+    "pluginShortcuts": {
+      "baseLabel": "{{plugin}} Config",
+      "baseDescription": "Open the configuration page for {{plugin}}",
+      "tabDescription": "Open the {{tab}} tab for {{plugin}}",
+      "fallbackLabel": "Plugin config: {{plugin}}",
+      "fallbackTabLabel": "Plugin config: {{plugin}} / {{tab}}",
+      "fallbackDescription": "Open the specified plugin configuration page",
+      "fallbackTabDescription": "Open the specified plugin configuration tab"
     },
     "survey": {
       "title": "Feedback Survey",
@@ -846,6 +928,7 @@
       "maibot": "MaiBot Feedback"
     },
     "stats": {
+      "overviewTitle": "Statistics Overview",
       "totalRequests": "Total Requests",
       "totalCost": "Total Cost",
       "tokenUsage": "Token Usage",
@@ -863,6 +946,21 @@
       "hours": "hours",
       "days": "days"
     },
+    "storage": {
+      "title": "Storage Usage",
+      "reading": "Reading",
+      "summary": "Images {{image}} · Emoji {{emoji}} · Logs {{logs}} · Database {{database}}",
+      "images": "Images",
+      "emoji": "Emoji",
+      "logs": "Logs",
+      "database": "Database",
+      "files": "{{count}} files",
+      "filesAndRecords": "{{files}} files · {{records}} records",
+      "databaseDetail": "{{files}} files · {{tables}} tables",
+      "readingDescription": "Reading local storage usage...",
+      "unavailable": "Local storage usage is unavailable",
+      "manage": "Manage Storage"
+    },
     "charts": {
       "tabs": {
         "trends": "Trends",
@@ -876,8 +974,8 @@
       "costTrendDesc": "API call cost over time",
       "tokenUsage": "Token Usage",
       "tokenUsageDesc": "Token consumption over time",
-      "modelDistribution": "Model Request Distribution",
-      "modelDistributionDesc": "Usage share per model ({{count}} models)",
+      "modelDistribution": "Model Cost Distribution",
+      "modelDistributionDesc": "Cost share per model ({{count}} models)",
       "modelDetails": "Model Details",
       "modelDetailsDesc": "Requests, cost and performance",
       "recentActivity": "Recent Activity",

@@ -2,6 +2,8 @@
   "header": {
     "collapseSidebar": "收起侧边栏",
     "expandSidebar": "展开侧边栏",
+    "collapseTopbar": "收起顶栏",
+    "expandTopbar": "展开顶栏",
     "toggleConnection": "切换后端连接",
     "viewAnnualSummary": "查看年度总结",
     "annualSummary": "2025 年度总结",
@@ -12,6 +14,8 @@
     "switchToDark": "切换到深色模式",
     "logout": "登出系统",
     "logoutLabel": "登出",
+    "switchLanguage": "切换语言",
+    "moreActions": "更多操作",
     "notConnected": "未连接"
   },
   "sidebar": {
@@ -27,11 +31,12 @@
       "botMainConfig": "麦麦设置",
       "aiModelProvider": "模型厂商设置",
       "modelManagement": "模型管理",
-      "promptManagement": "Prompt 管理",
-      "adapterConfig": "麦麦适配器配置",
+      "promptManagement": "Prompt管理",
+      "promptGenerator": "人设生成器（测试功能）",
       "emojiManagement": "表情包",
       "expressionManagement": "表达方式",
       "slangManagement": "黑话",
+      "behaviorLearning": "行为学习",
       "personInfo": "人物信息管理",
       "knowledgeGraph": "长期记忆图谱",
       "knowledgeBase": "长期记忆",
@@ -42,6 +47,7 @@
       "logViewer": "日志查看器",
       "reasoningProcess": "推理过程",
       "maisakaMonitor": "麦麦观察",
+      "chatManagement": "聊天管理",
       "localChat": "本地聊天室",
       "settings": "系统设置"
     }
@@ -49,10 +55,10 @@
   "workspace": {
     "switcherLabel": "切换麦麦工作区",
     "settings": "麦麦设置",
-    "chat": "麦麦聊天"
+    "chat": "麦麦聊天",
+    "logs": "麦麦日志"
   },
   "chat": {
-    "defaultTab": "WebUI",
     "botNameFallback": "麦麦",
     "userFallback": "用户",
     "userNameFallback": "WebUI用户",
@@ -100,7 +106,6 @@
       "offline": "离线",
       "subtitle": "{{count}} 个会话",
       "title": "聊天",
-      "webuiBadge": "WebUI",
       "virtualBadge": "虚拟",
       "profileTitle": "我的身份",
       "editName": "编辑昵称",
@@ -112,7 +117,7 @@
       "groupName": "虚拟群名（可选）",
       "groupNameHint": "麦麦会认为这是一个名为此名称的群聊",
       "knownUserSuffix": " · 已认识",
-      "loading": "Thinking...",
+      "loading": "加载中...",
       "noUsers": "没有找到用户",
       "personCount": "({{count}} 人)",
       "platform": "选择平台",
@@ -160,7 +165,7 @@
     }
   },
   "layout": {
-    "verifyingLogin": "正在验证登录状态...",
+    "verifyingLogin": "麦麦正在啃食服务器...",
     "logoTitle": "MaiBot WebUI",
     "logoTitleShort": "M"
   },
@@ -229,8 +234,6 @@
       "resetSuccessDesc": "主题已重置为默认值",
       "enableAnimations": "启用动画效果",
       "enableAnimationsDesc": "关闭后将禁用所有过渡动画和特效，提升性能",
-      "loginWavesBackground": "登录页波浪背景",
-      "loginWavesBackgroundDesc": "关闭后登录页将使用纯色背景，适合低性能设备",
       "inheritParentBg": "继承上级背景",
       "inheritParentBgDesc": "开启后将使用上级层级的背景配置",
       "fontFamilyLabel": "字体族 (Font Family)",
@@ -255,8 +258,6 @@
       "shadowXl": "极强 (Extra Large)",
       "blurLabel": "模糊效果 (Blur)",
       "sidebarWidthLabel": "侧边栏宽度 (Sidebar Width)",
-      "maxContentWidth": "内容区最大宽度 (Max Width)",
-      "spacingUnit": "基准间距 (Spacing Unit)",
       "animationSpeedLabel": "动画速度 (Speed)",
       "animationSpeedPlaceholder": "选择动画速度",
       "animationFast": "快速 (100ms)",
@@ -337,6 +338,9 @@
       "securityTip6": "建议使用系统生成的 Token 以获得最高安全性"
     },
     "other": {
+      "display": "展示设置",
+      "enableAvatarFetch": "获取并显示用户头像",
+      "enableAvatarFetchDesc": "关闭后，聊天页和推理过程不再请求头像接口，界面会显示默认头像。",
       "performance": "性能与存储",
       "localStorage": "本地存储使用",
       "logCache": "日志缓存大小",
@@ -443,6 +447,9 @@
         "radix": "无样式的可访问组件库",
         "tailwind": "实用优先的 CSS 框架",
         "lucide": "精美的图标库",
+        "iconifyReact": "统一图标渲染组件",
+        "streamlineSharp": "Streamline 设计的 Sharp 图标集，经 Iconify 提供，使用 CC BY 4.0 许可并保留署名",
+        "streamlineBlock": "Streamline 设计的 Block 图标集，经 Iconify 提供，使用 CC BY 4.0 许可并保留署名",
         "tanstackRouter": "类型安全的路由库",
         "zustand": "轻量级状态管理",
         "reactHookForm": "高性能表单库",
@@ -491,11 +498,6 @@
     "securityTipTitle": "安全提示",
     "securityTip1": "请妥善保管您的 Token，不要泄露给他人",
     "securityTip2": "如需重置 Token，请在登录后前往系统设置",
-    "slowLink": "我觉得这个界面很卡怎么办？",
-    "disableAnimTitle": "关闭背景动画",
-    "disableAnimDesc": "背景动画可能会在低性能设备上造成卡顿。关闭动画可以显著提升界面流畅度。",
-    "disableAnimDetail": "关闭动画后，背景将变为纯色，但不影响任何功能的使用。您可以随时在系统设置中重新开启动画。",
-    "disableAnimBtn": "关闭动画",
     "verifyFailed": "Token 验证失败，请检查后重试",
     "connFailed": "连接服务器失败，请检查网络连接",
     "switchToLight": "切换到浅色模式",
@@ -503,6 +505,10 @@
   },
   "setupPage": {
     "steps": {
+      "botProfile": {
+        "title": "基础与人格",
+        "description": "配置昵称、人格和表达风格"
+      },
       "botBasic": {
         "title": "Bot基础",
         "description": "配置机器人的基本信息"
@@ -521,8 +527,8 @@
       }
     },
     "loading": {
-      "title": "Thinking...",
-      "description": "Thinking..."
+      "title": "加载中...",
+      "description": "正在读取已有配置"
     },
     "header": {
       "title": "首次配置向导",
@@ -550,7 +556,7 @@
       "saveFailedTitle": "保存失败",
       "validationFailedTitle": "验证失败",
       "completeSuccessTitle": "配置完成",
-      "completeSuccessDescription": "{{appName}} 正在重启以应用新配置...",
+      "completeSuccessDescription": "{{appName}} 配置已保存并生效。",
       "completeFailedTitle": "配置失败",
       "skipFailedTitle": "跳过失败",
       "unknownError": "未知错误"
@@ -635,11 +641,11 @@
         "multipleReplyStyle": {
           "label": "备用表达风格",
           "placeholder": "每行输入一种备用表达风格",
-          "description": "当列表不为空时，麦麦会按概率从这些风格中随机替换默认表达风格"
+          "description": "当列表不为空时，麦麦会按概率从这些风格中随机注入一次性表达提示"
         },
         "multipleProbability": {
-          "label": "备用风格触发概率",
-          "description": "每次构建回复时，从备用表达风格中随机替换默认表达风格的概率"
+          "label": "临时风格注入概率",
+          "description": "每次构建回复时，从备用表达风格中随机注入一次性表达提示的概率"
         }
       },
       "emoji": {
@@ -720,7 +726,7 @@
     }
   },
   "common": {
-    "loading": "Thinking...",
+    "loading": "加载中...",
     "error": "错误",
     "retry": "重试",
     "save": "保存",
@@ -737,19 +743,19 @@
   "restart": {
     "preparing": "准备重启",
     "preparingDesc": "正在发送重启请求...",
-    "preparingTip": "🔄 正在准备重启麦麦...",
+    "preparingTip": "正在准备重启麦麦...",
     "restarting": "正在重启麦麦",
     "restartingDesc": "请稍候，麦麦正在重启中...",
-    "restartingTip": "🔄 配置已保存，正在重启主程序...",
+    "restartingTip": "配置已保存，正在重启主程序...",
     "checking": "检查服务状态",
     "checkingDesc": "等待服务恢复... ({{current}}/{{max}})",
     "checkingTip": "重启中，请勿关闭页面...",
     "success": "重启成功",
     "successDesc": "正在跳转到登录页面...",
-    "successTip": "✅ 配置已生效，服务运行正常",
+    "successTip": "配置已生效，服务运行正常",
     "failed": "重启超时",
     "failedDesc": "服务未能在预期时间内恢复",
-    "failedTip": "⚠️ 如果长时间无响应，请尝试手动重启",
+    "failedTip": "如果长时间无响应，请尝试手动重启",
     "refreshPage": "刷新页面",
     "retryCheck": "重试检测",
     "elapsed": "已用时:"
@@ -784,10 +790,9 @@
       "homeDesc": "查看仪表板概览",
       "botConfig": "麦麦设置",
       "botConfigDesc": "配置麦麦的核心设置",
-      "modelProvider": "模型厂商设置",
-      "modelProviderDesc": "配置模型提供商",
       "model": "麦麦模型配置",
       "modelDesc": "配置模型参数",
+      "promptGeneratorDesc": "将文段或人设生成可注入配置的人设块",
       "emoji": "表情包",
       "emojiDesc": "管理麦麦的表情包",
       "expression": "表达方式",
@@ -796,6 +801,7 @@
       "personDesc": "管理人物信息",
       "jargon": "黑话",
       "jargonDesc": "管理麦麦学习到的黑话和俚语",
+      "behaviorLearningDesc": "浏览行为经验路径和检索命中",
       "statistics": "统计信息",
       "statisticsDesc": "查看使用统计",
       "plugins": "插件市场",
@@ -814,10 +820,10 @@
     "navigatedTo": "已导航至 {{page}}"
   },
   "home": {
-    "title": "实时监控面板",
-    "subtitle": "麦麦运行状态和统计数据一览",
-    "loading": "Thinking...",
-    "loadingHint": "Thinking...",
+    "title": "首页",
+    "subtitle": "观看基本信息和快捷入口",
+    "loading": "加载中...",
+    "loadingHint": "加载中...",
     "timeRange": {
       "24h": "24小时",
       "7d": "7天",
@@ -826,9 +832,27 @@
     "autoRefresh": "自动刷新",
     "botStatus": {
       "title": "麦麦状态",
+      "loading": "读取中",
       "running": "运行中",
       "stopped": "已停止",
-      "uptime": "运行 {{time}}"
+      "unknown": "未知",
+      "uptime": "{{time}}",
+      "visualEnabled": "启用视觉",
+      "memoryEnabled": "启用记忆"
+    },
+    "versionCard": {
+      "title": "麦麦版本",
+      "mainVersion": "主程序版本",
+      "webuiVersion": "WebUI 版本",
+      "stableLatest": "最新版本",
+      "githubReleases": "GitHub Releases",
+      "unknown": "未知"
+    },
+    "platformGuide": {
+      "title": "添加平台账号",
+      "description": "还没有配置麦麦用于连接消息平台的账号。",
+      "detail": "配置平台和账号后，麦麦才能接入 QQ 等消息软件收发消息。",
+      "action": "去添加平台账号"
     },
     "quickActions": {
       "title": "快速操作",
@@ -837,15 +861,72 @@
       "expressionReview": "表达审核",
       "viewLogs": "查看日志",
       "pluginManage": "插件管理",
-      "systemSettings": "系统设置"
+      "systemSettings": "系统设置",
+      "pluginConfig": "插件配置",
+      "appearanceSettings": "外观设置",
+      "localCache": "本地缓存",
+      "modelProviders": "模型厂商设置",
+      "modelList": "模型列表",
+      "modelTasks": "模型功能分配",
+      "botConfig": "主程序配置",
+      "emojiManagement": "表情包管理",
+      "expressionManagement": "表达方式管理",
+      "statistics": "详细统计数据",
+      "customize": "自定义",
+      "empty": "还没有选择快捷入口",
+      "add": "添加入口",
+      "descriptions": {
+        "restart": "重启麦麦主程序",
+        "expressionReview": "打开表达学习审核弹窗",
+        "viewLogs": "查看 WebUI 日志",
+        "pluginManage": "打开插件市场与插件管理",
+        "systemSettings": "打开系统设置",
+        "pluginConfig": "打开已安装插件配置页面",
+        "appearanceSettings": "打开设置 / 外观",
+        "localCache": "打开设置 / 本地缓存",
+        "modelProviders": "打开模型管理 / 模型厂商设置",
+        "modelList": "打开模型管理 / 模型列表",
+        "modelTasks": "打开模型管理 / 为模型分配功能",
+        "botConfig": "打开麦麦主程序配置",
+        "emojiManagement": "打开表情包资源管理",
+        "expressionManagement": "打开表达方式管理",
+        "statistics": "打开 maibot_statistics.html"
+      },
+      "categories": {
+        "system": "系统",
+        "config": "配置",
+        "resource": "资源",
+        "plugin": "插件",
+        "monitor": "监控",
+        "external": "外部"
+      },
+      "dialog": {
+        "title": "自定义快捷入口",
+        "description": "选择首页快捷操作卡片中显示的入口，可包含页面标签页和插件配置页。",
+        "searchPlaceholder": "搜索入口、插件或标签页...",
+        "loadingPluginEntries": "正在加载插件入口...",
+        "noMatches": "没有找到匹配的入口",
+        "restoreDefault": "恢复默认",
+        "done": "完成"
+      }
+    },
+    "pluginShortcuts": {
+      "baseLabel": "{{plugin}} 配置",
+      "baseDescription": "打开 {{plugin}} 的插件配置页面",
+      "tabDescription": "打开 {{plugin}} 的 {{tab}} 标签页",
+      "fallbackLabel": "插件配置：{{plugin}}",
+      "fallbackTabLabel": "插件配置：{{plugin}} / {{tab}}",
+      "fallbackDescription": "打开指定插件配置页面",
+      "fallbackTabDescription": "打开指定插件配置标签页"
     },
     "survey": {
       "title": "反馈问卷",
-      "description": "帮助我们改进产品体验",
+      "description": "帮助我们改进麦麦体验",
       "webui": "WebUI 反馈",
       "maibot": "麦麦反馈"
     },
     "stats": {
+      "overviewTitle": "统计概览",
       "totalRequests": "总请求数",
       "totalCost": "总花费",
       "tokenUsage": "Token消耗",
@@ -863,6 +944,21 @@
       "hours": "小时",
       "days": "天"
     },
+    "storage": {
+      "title": "存储占用",
+      "reading": "读取中",
+      "summary": "图片 {{image}} · 表情 {{emoji}} · 日志 {{logs}} · 数据库 {{database}}",
+      "images": "图片",
+      "emoji": "表情",
+      "logs": "日志",
+      "database": "数据库",
+      "files": "{{count}} 个文件",
+      "filesAndRecords": "{{files}} 个文件 · {{records}} 条记录",
+      "databaseDetail": "{{files}} 个文件 · {{tables}} 张表",
+      "readingDescription": "正在读取本地存储占用...",
+      "unavailable": "暂未获取到本地存储占用",
+      "manage": "管理存储"
+    },
     "charts": {
       "tabs": {
         "trends": "趋势",
@@ -876,8 +972,8 @@
       "costTrendDesc": "API调用成本变化",
       "tokenUsage": "Token消耗",
       "tokenUsageDesc": "Token使用量变化",
-      "modelDistribution": "模型请求分布",
-      "modelDistributionDesc": "各模型使用占比 (共 {{count}} 个模型)",
+      "modelDistribution": "模型花费分布",
+      "modelDistributionDesc": "各模型花费占比 (共 {{count}} 个模型)",
       "modelDetails": "模型详细统计",
       "modelDetailsDesc": "请求数、花费和性能",
       "recentActivity": "最近活动",

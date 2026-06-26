@@ -5,27 +5,31 @@
 /**
  * 黑话信息
  */
+export type JargonCreatedBy = 'AI' | 'MANUAL'
+
 export interface Jargon {
   id: number
   content: string
-  raw_content: string | null
   meaning: string | null
-  chat_id: string
-  stream_id: string | null  // 解析后的 stream_id，用于编辑时匹配
+  session_id: string
+  session_ids: string[]
   chat_name: string | null  // 解析后的聊天名称，用于前端显示
+  chat_names: string[]
   is_global: boolean
   count: number
-  is_jargon: boolean | null  // null 表示未判定
+  is_jargon: boolean
+  is_legacy_empty_meaning: boolean
   is_complete: boolean
-  inference_with_context: string | null
-  inference_content_only: string | null
+  created_by: JargonCreatedBy
+  created_timestamp: string
+  updated_timestamp: string
 }
 
 /**
  * 聊天信息
  */
 export interface JargonChatInfo {
-  chat_id: string
+  session_id: string
   chat_name: string
   platform: string | null
   is_group: boolean
@@ -63,9 +67,9 @@ export interface JargonDetailResponse {
  */
 export interface JargonCreateRequest {
   content: string
-  raw_content?: string
   meaning?: string
-  chat_id: string
+  session_id?: string
+  session_ids?: string[]
   is_global?: boolean
 }
 
@@ -74,11 +78,11 @@ export interface JargonCreateRequest {
  */
 export interface JargonUpdateRequest {
   content?: string
-  raw_content?: string
   meaning?: string
-  chat_id?: string
+  session_id?: string
+  session_ids?: string[]
   is_global?: boolean
-  is_jargon?: boolean | null
+  is_jargon?: boolean
 }
 
 /**
@@ -115,7 +119,8 @@ export interface JargonStats {
   total: number
   confirmed_jargon: number
   confirmed_not_jargon: number
-  pending: number
+  manual_jargon: number
+  pending?: number
   global_count: number
   complete_count: number
   chat_count: number

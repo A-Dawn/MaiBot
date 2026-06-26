@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections import defaultdict
 from contextlib import contextmanager
 from datetime import datetime, timedelta
 from types import ModuleType
@@ -94,6 +95,30 @@ def _is_bot_self(platform: str, user_id: str) -> bool:
     return False
 
 
+def test_build_llm_owner_costs_groups_core_and_plugins() -> None:
+    """LLM 来源花费统计应区分本体与不同插件。"""
+
+    costs_by_type = defaultdict(
+        float,
+        {
+            "maisaka.replyer": 1.25,
+            "A_Memorix.person_fact_writeback": 0.5,
+            "plugin.weather": 0.75,
+            "plugin.music.asr": 0.25,
+            "plugin.todo": 0.4,
+        },
+    )
+
+    owner_costs = statistic._build_llm_owner_costs(costs_by_type)
+
+    assert owner_costs == {
+        "本体": 1.75,
+        "插件 music": 0.25,
+        "插件 todo": 0.4,
+        "插件 weather": 0.75,
+    }
+
+
 def test_statistic_read_queries_disable_auto_commit(monkeypatch: pytest.MonkeyPatch) -> None:
     """统计模块的纯读查询应关闭自动提交，避免 Session 退出后对象被 expire。"""
     calls: list[bool] = []
@@ -108,10 +133,104 @@ def test_statistic_read_queries_disable_auto_commit(monkeypatch: pytest.MonkeyPa
     monkeypatch.setattr(statistic, "fetch_online_time_since", lambda query_start_time: [])
     monkeypatch.setattr(statistic, "fetch_model_usage_since", lambda query_start_time: [])
     monkeypatch.setattr(statistic, "fetch_messages_since", lambda query_start_time: [])
-    monkeypatch.setattr(statistic, "fetch_tool_records_since", lambda query_start_time: [])
+    monkeypatch.setattr(statistic, "count_tool_records_since", lambda query_start_time, tool_name: 0)
 
     task._collect_message_count_for_period([("last_hour", now - timedelta(hours=1))])
     task._collect_interval_data(now, hours=1, interval_minutes=60)
     task._collect_metrics_interval_data(now, hours=1, interval_hours=1)
 
     assert calls == []
+
+
+def test_model_request_cache_rate_ignores_disabled_model_cache(monkeypatch: pytest.MonkeyPatch) -> None:
+    """模型未开启 cache 时，其 prompt token 不进入缓存命中率分母。"""
+
+    now = datetime.now()
+    records = [
+        {
+            "timestamp": now,
+            "request_type": "chat.reply",
+            "model_api_provider_name": "provider",
+            "model_assign_name": "cache-enabled",
+            "model_name": "gpt-a",
+            "prompt_tokens": 10,
+            "completion_tokens": 2,
+            "prompt_cache_enabled": True,
+            "prompt_cache_hit_tokens": 4,
+            "prompt_cache_miss_tokens": 6,
+            "cost": 0.01,
+            "time_cost": 1.0,
+            "session_id": "g_validation",
+        },
+        {
+            "timestamp": now,
+            "request_type": "chat.reply",
+            "model_api_provider_name": "provider",
+            "model_assign_name": "cache-disabled",
+            "model_name": "gpt-b",
+            "prompt_tokens": 10,
+            "completion_tokens": 2,
+            "prompt_cache_enabled": False,
+            "prompt_cache_hit_tokens": 0,
+            "prompt_cache_miss_tokens": 10,
+            "cost": 0.01,
+            "time_cost": 1.0,
+            "session_id": "",
+        },
+    ]
+    monkeypatch.setattr(statistic, "fetch_model_usage_since", lambda query_start_time: records)
+
+    stats = statistic.StatisticOutputTask._collect_model_request_for_period([("last_hour", now - timedelta(hours=1))])
+    period_stats = stats["last_hour"]
+
+    assert period_stats[statistic.TOTAL_REQ_CNT] == 2
+    assert period_stats[statistic.IN_TOK_BY_MODEL]["cache-disabled"] == 10
+    assert period_stats[statistic.CACHE_HIT_TOK] == 4
+    assert period_stats[statistic.CACHE_MISS_TOK] == 6
+    assert period_stats[statistic.CACHE_MISS_TOK_BY_MODEL]["cache-disabled"] == 0
+    assert period_stats[statistic.COST_BY_CHAT]["g_validation"] == 0.01
+    assert period_stats[statistic.COST_BY_CHAT][statistic.GLOBAL_COST_SESSION_KEY] == 0.01
+    assert "" not in period_stats[statistic.COST_BY_CHAT]
+
+
+def test_html_report_encodes_chat_names_in_tables_and_charts(tmp_path) -> None:
+    report_path = tmp_path / "maibot_statistics.html"
+    now = datetime.now()
+    chat_name = '</script><span data-case="report-rendering">&'
+
+    task = statistic.StatisticOutputTask(str(report_path))
+    stats = {}
+    for period_key, _duration, _label in task.stat_period:
+        period_data = task._build_stat_period_data()
+        period_data[statistic.MSG_CNT_BY_CHAT]["g_validation"] = 1
+        period_data[statistic.COST_BY_TYPE]["maisaka.replyer"] = 0.1
+        period_data[statistic.COST_BY_TYPE]["plugin.weather"] = 0.2
+        period_data[statistic.COST_BY_CHAT]["g_validation"] = 0.12
+        period_data[statistic.COST_BY_CHAT][statistic.GLOBAL_COST_SESSION_KEY] = 0.34
+        period_data[statistic.TOTAL_MSG_CNT] = 1
+        stats[period_key] = period_data
+    task.name_mapping["g_validation"] = (chat_name, now.timestamp())
+
+    task._generate_html_report(stats, now)
+    generated_html = report_path.read_text(encoding="utf-8")
+
+    assert chat_name not in generated_html
+    assert "&lt;/script&gt;&lt;span data-case=&quot;report-rendering&quot;&gt;&amp;" in generated_html
+    assert "\\u003c/script\\u003e\\u003cspan data-case=" in generated_html
+    assert 'class="pie-chart-grid"' in generated_html
+    assert 'class="pie-chart-canvas-wrap"' in generated_html
+    assert 'class="pie-chart-legend"' in generated_html
+    assert "grid-template-columns: repeat(2, minmax(0, 1fr));" in generated_html
+    assert "height: 450px;" in generated_html
+    assert "max-height: 128px;" in generated_html
+    assert "overflow-y: auto;" in generated_html
+    assert "maintainAspectRatio: false" in generated_html
+    assert "display: false" in generated_html
+    assert "调用来源花费分布" in generated_html
+    assert "ownerPieChart" in generated_html
+    assert "本体" in generated_html
+    assert "插件 weather" in generated_html
+    assert "聊天流花费分布" in generated_html
+    assert "全局" in generated_html
+    assert "chatCostPieChart" in generated_html
+    assert "chatCostPieLegend" in generated_html

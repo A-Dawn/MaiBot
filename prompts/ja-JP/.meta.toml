@@ -1,3 +1,13 @@
+[behavior_scene_analyze]
+display_name = "行動シーン分析"
+advanced = true
+description = "直近のチャット文脈を再利用可能な行動シーン断片に分割し、領域タグ、行動ニーズ、相互作用の特徴を抽出するテンプレート。"
+
+[consolidate_behavior]
+display_name = "行動表現の統合"
+advanced = true
+description = "行動表現ライブラリ内の意味的に重複する項目を見つけ、保持対象と統合対象のプランを出力するテンプレート。"
+
 [maisaka_chat]
 display_name = "Planner"
 advanced = false
@@ -73,10 +83,30 @@ display_name = "表达风格学习"
 advanced = true
 description = "用于从聊天内容中学习表达风格的模板。"
 
+[learn_jargon]
+display_name = "隠語学習"
+advanced = true
+description = "実際のチャットからグループ固有の隠語候補を抽出し、意味と共起分布を更新するためのテンプレート。"
+
+[learn_behavior]
+display_name = "行動表現学習"
+advanced = true
+description = "実際のチャットから再利用可能なシーン・行動・結果のパターンを抽出し、観察学習と自己フィードバックを扱うテンプレート。"
+
+[maisaka_chat_focus]
+display_name = "Focus Planner"
+advanced = true
+description = "Focus モード用の Maisaka 計画テンプレート。現在注目しているチャットとチャット横断概要をもとに次の行動を選択する。"
+
 [maisaka_timing_gate]
 display_name = "Timing Gate"
 advanced = false
 description = "Maisaka 节奏控制模板，负责在每轮主循环前判断当前应该等待、停止，还是继续进入思考与回复流程。"
+
+[mid_term_memory_summary]
+display_name = "中期チャット要約"
+advanced = true
+description = "コンテキスト裁切時に、削除されるチャット履歴を long_summary、brief、keywords に要約するためのテンプレート。"
 
 [memory_retrieval_react_prompt_head_memory]
 display_name = "记忆检索 ReAct 头部"

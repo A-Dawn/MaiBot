@@ -1,5 +1,5 @@
 from typing import Dict, List, Optional
-from sqlmodel import func as fn, select
+from sqlmodel import col, func as fn, select
 
 import json
 
@@ -50,7 +50,14 @@ def search_jargon(
     related_session_ids, _ = JargonConfigUtils.resolve_jargon_group_scope(chat_id)
 
     # 根据黑话互通组配置在 Python 层面过滤，同时限制结果数量（先多取一些，因为后面可能过滤）
-    query = select(Jargon).where(search_condition).order_by(Jargon.count.desc()).limit(limit * 2)  # type: ignore
+    query = (
+        select(Jargon)
+        .where(search_condition)
+        .where(col(Jargon.is_jargon).is_(True))
+        .where(fn.LENGTH(fn.TRIM(Jargon.meaning)) > 0)
+        .order_by(Jargon.created_by.desc(), Jargon.count.desc())  # type: ignore
+        .limit(limit * 2)
+    )
 
     # 执行查询并返回结果
     results: List[Dict[str, str]] = []

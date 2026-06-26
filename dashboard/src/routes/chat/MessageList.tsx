@@ -4,6 +4,7 @@ import { useTranslation } from 'react-i18next'
 
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { ScrollArea } from '@/components/ui/scroll-area'
+import { useResolvedAvatarUrl } from '@/lib/avatar-url'
 import { cn } from '@/lib/utils'
 
 import { ChatScrollContext, type ChatScrollContextValue } from './ChatScrollContext'
@@ -14,7 +15,7 @@ interface MessageListProps {
   messages: ChatMessage[]
   isLoadingHistory: boolean
   botDisplayName: string
-  /** 机器人 QQ 号；存在时会从 QQ 头像公开接口拉取头像作为 bot 头像。 */
+  /** 机器人 QQ 号；存在时通过 WebUI 头像缓存接口加载 bot 头像。 */
   botQq?: string
   userName: string
   language: string
@@ -85,19 +86,42 @@ export function MessageList({
   language,
 }: MessageListProps) {
   const { t } = useTranslation()
+  const viewportRef = useRef<HTMLDivElement>(null)
   const endRef = useRef<HTMLDivElement>(null)
   const messageRefs = useRef<Map<string, HTMLDivElement>>(new Map())
 
   useEffect(() => {
-    endRef.current?.scrollIntoView({ behavior: 'smooth' })
+    const viewport = viewportRef.current
+    if (!viewport) {
+      return
+    }
+
+    viewport.scrollTo({
+      top: viewport.scrollHeight,
+      behavior: 'smooth',
+    })
   }, [messages])
 
   const scrollToMessage = useCallback((messageId: string) => {
+    const viewport = viewportRef.current
     const target = messageRefs.current.get(messageId)
-    if (!target) {
+    if (!target || !viewport) {
       return false
     }
-    target.scrollIntoView({ behavior: 'smooth', block: 'center' })
+
+    const viewportRect = viewport.getBoundingClientRect()
+    const targetRect = target.getBoundingClientRect()
+    const targetTop =
+      viewport.scrollTop +
+      targetRect.top -
+      viewportRect.top -
+      viewport.clientHeight / 2 +
+      targetRect.height / 2
+
+    viewport.scrollTo({
+      top: Math.max(0, targetTop),
+      behavior: 'smooth',
+    })
     target.classList.add('chat-message-flash')
     window.setTimeout(() => {
       target.classList.remove('chat-message-flash')
@@ -118,10 +142,7 @@ export function MessageList({
     })
   }
 
-  // 优先使用 q1.qlogo.cn s=640（高清），QQ 公开头像接口。
-  const botAvatarUrl = botQq && /^\d+$/.test(botQq)
-    ? `https://q1.qlogo.cn/g?b=qq&nk=${botQq}&s=640`
-    : undefined
+  const botAvatarUrl = useResolvedAvatarUrl('qq', botQq)
 
   if (messages.length === 0 && !isLoadingHistory) {
     return (
@@ -130,6 +151,7 @@ export function MessageList({
           className="h-full w-full"
           contentClassName="!block w-full min-w-0"
           scrollbars="vertical"
+          viewportRef={viewportRef}
           viewportClassName="[&>div]:!block [&>div]:!min-w-0 [&>div]:w-full"
         >
           <EmptyState botName={botDisplayName} />
@@ -144,6 +166,7 @@ export function MessageList({
         className="h-full w-full"
         contentClassName="!block w-full min-w-0"
         scrollbars="vertical"
+        viewportRef={viewportRef}
         viewportClassName="[&>div]:!block [&>div]:!min-w-0 [&>div]:w-full"
       >
         <ChatScrollContext.Provider value={scrollContextValue}>
@@ -236,7 +259,7 @@ export function MessageList({
                         : 'bg-muted text-foreground rounded-2xl rounded-bl-md'
                     )}
                   >
-                    <RenderMessageContent message={message} isBot={!isUser} />
+                    <RenderMessageContent message={message} />
                   </div>
                 </div>
               </div>
