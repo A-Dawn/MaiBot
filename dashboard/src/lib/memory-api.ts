@@ -2115,6 +2115,29 @@ export async function getMemoryRuntimeConfig(): Promise<MemoryRuntimeConfigPaylo
   return requestJson<MemoryRuntimeConfigPayload>('/runtime/config')
 }
 
+export interface MemoryVectorSpace {
+  space_id: string
+  embedding_fingerprint: {
+    model?: string
+    model_identifier?: string
+    provider?: string
+    dimension?: number
+  }
+  state: 'active' | 'syncing' | 'saved'
+  can_delete: boolean
+  vector_count: number
+  size_bytes: number
+  last_used_at?: number
+}
+
+export async function getMemoryVectorSpaces(): Promise<{ success: boolean; items: MemoryVectorSpace[] }> {
+  return requestJson('/runtime/vectors/spaces')
+}
+
+export async function deleteMemoryVectorSpace(spaceId: string): Promise<{ success: boolean }> {
+  return requestJson(`/runtime/vectors/spaces/${encodeURIComponent(spaceId)}`, { method: 'DELETE' })
+}
+
 export async function refreshMemoryRuntimeSelfCheck(): Promise<MemoryRuntimeSelfCheckPayload> {
   return requestJson<MemoryRuntimeSelfCheckPayload>('/runtime/self-check/refresh', {
     method: 'POST',
