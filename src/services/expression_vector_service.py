@@ -1,6 +1,6 @@
 """表达向量的宿主接入层，负责配置通知和后台任务生命周期。"""
 
-from typing import Sequence
+from typing import Any, Dict, Sequence
 
 import json
 
@@ -74,6 +74,26 @@ class ExpressionVectorService:
             config_manager.unregister_reload_callback(self.on_config_reload)
             self._registered = False
         await expression_vector_index.stop_history_backfill()
+
+    async def list_vector_spaces(self) -> Dict[str, Any]:
+        return await run_on_main_loop(self._list_vector_spaces())
+
+    async def _list_vector_spaces(self) -> Dict[str, Any]:
+        config = global_config.expression
+        return await expression_vector_index.list_vector_spaces(
+            index_path=config.expression_vector_index_path,
+            enabled=config.expression_selection_mode == "vector_intent",
+        )
+
+    async def delete_vector_space(self, space_id: str) -> Dict[str, Any]:
+        return await run_on_main_loop(self._delete_vector_space(space_id))
+
+    async def _delete_vector_space(self, space_id: str) -> Dict[str, Any]:
+        config = global_config.expression
+        return await expression_vector_index.delete_vector_space(
+            index_path=config.expression_vector_index_path, space_id=space_id,
+            enabled=config.expression_selection_mode == "vector_intent",
+        )
 
 
 expression_vector_service = ExpressionVectorService()

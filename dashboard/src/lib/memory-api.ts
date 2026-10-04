@@ -1,4 +1,5 @@
 import type { PluginConfigSchema } from '@/lib/plugin-api'
+import type { VectorSpace, VectorSpaceList } from '@/types/vector-space'
 
 import { backendApi } from '@/lib/http'
 import type { HttpMethod } from '@/lib/http'
@@ -2115,22 +2116,9 @@ export async function getMemoryRuntimeConfig(): Promise<MemoryRuntimeConfigPaylo
   return requestJson<MemoryRuntimeConfigPayload>('/runtime/config')
 }
 
-export interface MemoryVectorSpace {
-  space_id: string
-  embedding_fingerprint: {
-    model?: string
-    model_identifier?: string
-    provider?: string
-    dimension?: number
-  }
-  state: 'active' | 'syncing' | 'saved'
-  can_delete: boolean
-  vector_count: number
-  size_bytes: number
-  last_used_at?: number
-}
+export type MemoryVectorSpace = VectorSpace
 
-export async function getMemoryVectorSpaces(): Promise<{ success: boolean; items: MemoryVectorSpace[] }> {
+export async function getMemoryVectorSpaces(): Promise<VectorSpaceList> {
   return requestJson('/runtime/vectors/spaces')
 }
 

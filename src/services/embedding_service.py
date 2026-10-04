@@ -31,7 +31,7 @@ def resolve_embedding_model_fingerprint(
     return build_embedding_fingerprint(
         model=model_name, provider=api_provider, model_identifier=model_identifier,
         base_url=provider.base_url, dimension=dimension,
-        dimension_request_mode="+".join(dimension_keys) if dimension_keys else "native",
+        dimension_request_mode="always" if dimension_keys else "never",
         extra_params=model.extra_params,
     )
 

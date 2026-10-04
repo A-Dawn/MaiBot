@@ -603,6 +603,7 @@ class ExpressionVectorIndex:
         self._history_backfill_wakeup = asyncio.Event()
         self._history_backfill_index_path: str | None = None
         self._profile_generation = 0
+        self._history_backfill_error = ""
 
     def request_history_backfill(self, *, index_path: str, enabled: bool = True) -> None:
         """配置变化后立即刷新标定，唤醒补建任务并跳过旧配置的扫描冷却。"""
@@ -611,10 +612,11 @@ class ExpressionVectorIndex:
         self._reset_profile_drift_candidate()
         self._history_backfill_last_empty_at = 0.0
         self._history_backfill_last_failure_at = 0.0
+        self._history_backfill_error = ""
         self._history_backfill_index_path = index_path
         self._history_backfill_wakeup.set()
         if enabled:
-            self.ensure_history_backfill_task(index_path=index_path)
+            self.ensure_history_backfill_task(index_path=index_path, force=True)
 
     async def stop_history_backfill(self) -> None:
         """等待后台补建任务退出。"""
@@ -622,6 +624,167 @@ class ExpressionVectorIndex:
         if task is not None and not task.done():
             task.cancel()
             await asyncio.gather(task, return_exceptions=True)
+
+    @staticmethod
+    def _space_profiles(payload: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """将旧单模型索引与当前分组索引转换为统一的模型库描述。"""
+        profiles = payload.get("embedding_profiles")
+        if profiles:
+            return profiles
+        return [{
+            "marker": payload.get("embedding_profile_marker") or LEGACY_EMBEDDING_PROFILE_MARKER,
+            "embedding_model": payload.get("embedding_model", ""),
+            "embedding_dimension": payload.get("embedding_dimension", 0),
+            "expression_count": len(payload.get("expressions", [])),
+            "cluster_count": len(payload.get("clusters", [])),
+            "vectors_key": "vectors", "cluster_centers_key": "cluster_centers",
+        }]
+
+    @staticmethod
+    def _attach_space_metadata(
+        profiles: List[Dict[str, Any]], payload: Dict[str, Any], current: ExpressionEmbeddingProfile,
+    ) -> None:
+        """保留各模型分组的身份与使用时间，不增加额外的模型库副本。"""
+        previous = {item["marker"]: item for item in payload.get("embedding_profiles", [])}
+        stored = payload.get("embedding_profile", {})
+        for item in profiles:
+            old = previous.get(item["marker"], {})
+            if item["marker"] == current.marker:
+                item["embedding_fingerprint"] = current.embedding_fingerprint
+                item["last_used_at"] = time.time()
+            elif "embedding_fingerprint" in old:
+                item["embedding_fingerprint"] = old["embedding_fingerprint"]
+                item["last_used_at"] = old.get("last_used_at")
+            elif item["marker"] == stored.get("marker"):
+                item["embedding_fingerprint"] = stored.get("embedding_fingerprint") or {
+                    "model": stored["model_name"], "model_identifier": stored["model_identifier"],
+                    "provider": stored["api_provider"], "dimension": stored["dimension"],
+                }
+
+    def _list_vector_spaces(self, index_path: Path, enabled: bool) -> Dict[str, Any]:
+        """只读取原子发布的清单，使状态查询无需等待网络请求或重嵌入。"""
+        payload = _load_index_payload(index_path)
+        task = self._history_backfill_task
+        running = task is not None and not task.done()
+        cache = self._profile_cache
+        current = cache[1] if enabled and cache is not None else None
+        active_marker = ""
+        if enabled and payload is not None:
+            active_marker = normalize_text(payload.get("embedding_profile_marker")) or LEGACY_EMBEDDING_PROFILE_MARKER
+        target_marker = current.marker if current is not None else active_marker
+        items = []
+        for item in self._space_profiles(payload) if payload is not None else []:
+            marker = item["marker"]
+            state = "saved"
+            if marker == target_marker and running:
+                state = "syncing"
+            elif marker in {active_marker, target_marker}:
+                state = "active"
+            fingerprint = item.get("embedding_fingerprint") or {
+                "model": item.get("embedding_model", ""), "dimension": item.get("embedding_dimension", 0),
+            }
+            stored = payload.get("embedding_profile", {})
+            if marker == stored.get("marker"):
+                fingerprint = stored.get("embedding_fingerprint") or {
+                    "model": stored["model_name"], "model_identifier": stored["model_identifier"],
+                    "provider": stored["api_provider"], "dimension": stored["dimension"],
+                }
+            vector_count = int(item.get("expression_count", 0))
+            cluster_count = int(item.get("cluster_count", 0))
+            dimension = int(item.get("embedding_dimension", 0))
+            items.append({
+                "space_id": marker, "embedding_fingerprint": fingerprint,
+                "state": state, "can_delete": state == "saved", "vector_count": vector_count,
+                "counts": {"expression": vector_count},
+                "size_bytes": (vector_count + cluster_count) * dimension * np.dtype(np.float32).itemsize,
+                "last_used_at": item.get("last_used_at"),
+            })
+        if current is not None and not any(item["space_id"] == current.marker for item in items):
+            items.insert(0, {
+                "space_id": current.marker, "embedding_fingerprint": current.embedding_fingerprint,
+                "state": "syncing", "can_delete": False, "vector_count": 0,
+                "counts": {"expression": 0}, "size_bytes": 0, "last_used_at": None,
+            })
+        if running:
+            state = "syncing"
+        elif self._history_backfill_error:
+            state = "failed"
+        else:
+            state = "ready" if payload is not None else "empty"
+        return {
+            "success": True, "items": items, "state": state,
+            "last_error": self._history_backfill_error, "target_space_id": target_marker,
+        }
+
+    async def list_vector_spaces(self, *, index_path: str, enabled: bool = True) -> Dict[str, Any]:
+        return await asyncio.to_thread(self._list_vector_spaces, resolve_project_path(index_path), enabled)
+
+    def _delete_vector_space(self, index_path: Path, space_id: str, enabled: bool) -> Dict[str, Any]:
+        """删除一个未使用的模型分组，数据库中的表达原文保持完整。"""
+        payload = _load_mutable_index_payload(index_path)
+        if payload is None:
+            return {"success": False, "error": "vector_space_not_found"}
+        cache = self._profile_cache
+        current = cache[1] if enabled and cache is not None else None
+        active_marker = ""
+        if enabled:
+            active_marker = normalize_text(payload.get("embedding_profile_marker")) or LEGACY_EMBEDDING_PROFILE_MARKER
+        if space_id == active_marker or (current is not None and space_id == current.marker):
+            return {"success": False, "error": "vector_space_in_use"}
+        profiles = self._space_profiles(payload)
+        if not any(item["marker"] == space_id for item in profiles):
+            return {"success": False, "error": "vector_space_not_found"}
+        remaining = [item for item in profiles if item["marker"] != space_id]
+        vectors_path = _resolve_vectors_path(index_path, payload)
+        if not remaining:
+            index_path.unlink()
+            if vectors_path.parent == index_path.parent and (
+                vectors_path.name == f"{index_path.stem}.npz"
+                or vectors_path.name.startswith(f"{index_path.stem}.vectors-")
+            ):
+                vectors_path.unlink()
+        else:
+            # 保留其余模型分组的数组和索引位置，只移除目标分组。
+            with np.load(vectors_path) as arrays:
+                vectors = {item["marker"]: arrays[item["vectors_key"]] for item in remaining}
+                centers = {item["marker"]: arrays[item["cluster_centers_key"]] for item in remaining}
+            payload["expressions"] = [
+                item for item in payload.get("expressions", [])
+                if (item.get("embedding_profile_marker") or payload.get("embedding_profile_marker")
+                    or LEGACY_EMBEDDING_PROFILE_MARKER) != space_id
+            ]
+            payload["embedding_profiles"] = remaining
+            payload["sample_count"] = len(payload["expressions"])
+            payload["clusters"] = self._build_cluster_summaries(payload["expressions"])
+            payload["updated_at"] = datetime.now().isoformat(timespec="seconds")
+            if payload.get("embedding_profile_marker") == space_id:
+                # 非向量模式允许清除最后使用的分组；其余分组不继承已删除模型的标定。
+                payload.pop("embedding_profile", None)
+                payload.pop("cluster_maintenance", None)
+                payload["embedding_profile_marker"] = remaining[0]["marker"]
+                payload["embedding_model"] = remaining[0].get("embedding_model", "")
+                payload["embedding_dimension"] = remaining[0].get("embedding_dimension", 0)
+            self._write_index_files(
+                index_path=index_path, vectors_path=vectors_path, payload=payload,
+                profile_vectors=vectors, profile_cluster_centers=centers,
+            )
+        self._snapshot = None
+        self._history_backfill_last_empty_at = 0.0
+        return {"success": True, "deleted": space_id}
+
+    async def delete_vector_space(
+        self, *, index_path: str, space_id: str, enabled: bool = True,
+    ) -> Dict[str, Any]:
+        async with self._update_lock:
+            worker = asyncio.create_task(asyncio.to_thread(
+                self._delete_vector_space, resolve_project_path(index_path), space_id, enabled,
+            ))
+            try:
+                return await asyncio.shield(worker)
+            except asyncio.CancelledError:
+                # 请求取消后，已开始的文件发布仍须完成，再释放索引写锁。
+                await worker
+                raise
 
     @staticmethod
     def _load_persisted_embedding_profile(index_path: Path) -> ExpressionEmbeddingProfile | None:
@@ -2488,6 +2651,7 @@ class ExpressionVectorIndex:
                 )
 
             now_text = datetime.now().isoformat(timespec="seconds")
+            self._attach_space_metadata(profile_metadata, payload, current_profile)
             payload["version"] = VECTOR_INDEX_VERSION
             payload.setdefault("generated_at", now_text)
             payload["updated_at"] = now_text
@@ -2653,6 +2817,7 @@ class ExpressionVectorIndex:
             )
             now_text = datetime.now().isoformat(timespec="seconds")
             payload = index_state.payload
+            self._attach_space_metadata(profile_metadata, payload, profile)
             payload["version"] = VECTOR_INDEX_VERSION
             payload.setdefault("generated_at", now_text)
             payload["updated_at"] = now_text
@@ -2695,6 +2860,7 @@ class ExpressionVectorIndex:
         self,
         *,
         index_path: str,
+        force: bool = False,
     ) -> None:
         """确保历史表达向量补建后台任务正在运行。"""
 
@@ -2702,9 +2868,9 @@ class ExpressionVectorIndex:
             return
 
         now = time.monotonic()
-        if now - self._history_backfill_last_empty_at < HISTORY_BACKFILL_EMPTY_SCAN_INTERVAL_SECONDS:
+        if not force and now - self._history_backfill_last_empty_at < HISTORY_BACKFILL_EMPTY_SCAN_INTERVAL_SECONDS:
             return
-        if now - self._history_backfill_last_failure_at < HISTORY_BACKFILL_FAILURE_RETRY_INTERVAL_SECONDS:
+        if not force and now - self._history_backfill_last_failure_at < HISTORY_BACKFILL_FAILURE_RETRY_INTERVAL_SECONDS:
             return
 
         try:
@@ -2735,11 +2901,21 @@ class ExpressionVectorIndex:
             return
         try:
             task.result()
-        except Exception:
+        except Exception as exc:
             self._history_backfill_last_failure_at = time.monotonic()
+            self._history_backfill_error = str(exc)
             logger.exception("表达向量历史补建任务异常退出")
-            return
-        self._history_backfill_last_failure_at = 0.0
+        else:
+            self._history_backfill_last_failure_at = 0.0
+            self._history_backfill_error = ""
+        if self._history_backfill_wakeup.is_set() and self._history_backfill_index_path is not None:
+            from src.config.config import global_config
+
+            # 旧配置的在途请求失败时，仍立即处理已经收到的新配置通知。
+            if global_config.expression.expression_selection_mode == "vector_intent":
+                self._history_backfill_last_empty_at = 0.0
+                self._history_backfill_last_failure_at = 0.0
+                self.ensure_history_backfill_task(index_path=self._history_backfill_index_path, force=True)
 
     @staticmethod
     def _calculate_history_backfill_interval(
