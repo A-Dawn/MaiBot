@@ -574,6 +574,28 @@ class ExpressionVectorIndex:
         self._history_backfill_task: asyncio.Task[None] | None = None
         self._history_backfill_last_empty_at = 0.0
         self._history_backfill_last_failure_at = 0.0
+        self._history_backfill_wakeup = asyncio.Event()
+        self._history_backfill_index_path: str | None = None
+        self._profile_generation = 0
+
+    def request_history_backfill(self, *, index_path: str, enabled: bool = True) -> None:
+        """配置变化后立即刷新标定，唤醒补建任务并跳过旧配置的扫描冷却。"""
+        self._profile_generation += 1
+        self._profile_cache = None
+        self._reset_profile_drift_candidate()
+        self._history_backfill_last_empty_at = 0.0
+        self._history_backfill_last_failure_at = 0.0
+        self._history_backfill_index_path = index_path
+        self._history_backfill_wakeup.set()
+        if enabled:
+            self.ensure_history_backfill_task(index_path=index_path)
+
+    async def stop_history_backfill(self) -> None:
+        """等待后台补建任务退出。"""
+        task = self._history_backfill_task
+        if task is not None and not task.done():
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
 
     @staticmethod
     def _load_persisted_embedding_profile(index_path: Path) -> ExpressionEmbeddingProfile | None:
@@ -677,38 +699,44 @@ class ExpressionVectorIndex:
                 return cached_profile
 
         async with self._profile_lock:
-            now = time.monotonic()
-            configured_identity = self._configured_embedding_identity()
-            if self._profile_cache is not None:
-                cached_at, cached_profile, cached_identity = self._profile_cache
-                if cached_identity == configured_identity and now - cached_at <= EMBEDDING_PROFILE_CACHE_SECONDS:
-                    return cached_profile
+            while True:
+                now = time.monotonic()
+                configured_identity = self._configured_embedding_identity()
+                if self._profile_cache is not None:
+                    cached_at, cached_profile, cached_identity = self._profile_cache
+                    if cached_identity == configured_identity and now - cached_at <= EMBEDDING_PROFILE_CACHE_SECONDS:
+                        return cached_profile
 
-            from src.services.embedding_service import EmbeddingServiceClient
+                generation = self._profile_generation
+                from src.services.embedding_service import EmbeddingServiceClient
 
-            embedding_client = EmbeddingServiceClient(
-                task_name="embedding",
-                request_type="expression.selection.profile_probe",
-                session_id=session_id,
-            )
-            probe_results = await embedding_client.embed_texts(
-                list(EMBEDDING_PROFILE_PROBE_TEXTS),
-                max_concurrent=1,
-                session_id=session_id,
-            )
-            candidate_profile = build_embedding_profile_from_probe_results(probe_results)
-            persisted_profile = self._load_persisted_embedding_profile(resolve_project_path(index_path))
-            profile = self._resolve_embedding_profile_candidate(
-                persisted_profile=persisted_profile,
-                candidate_profile=candidate_profile,
-            )
-            self._profile_cache = (time.monotonic(), profile, configured_identity)
-            logger.info(
-                f"表达向量 embedding profile 已标定: marker={profile.marker[:12]} "
-                f"model={profile.model_name} identifier={profile.model_identifier} "
-                f"provider={profile.api_provider} dimension={profile.dimension} revision={profile.revision}"
-            )
-            return profile
+                embedding_client = EmbeddingServiceClient(
+                    task_name="embedding",
+                    request_type="expression.selection.profile_probe",
+                    session_id=session_id,
+                )
+                probe_results = await embedding_client.embed_texts(
+                    list(EMBEDDING_PROFILE_PROBE_TEXTS),
+                    max_concurrent=1,
+                    session_id=session_id,
+                )
+                candidate_profile = build_embedding_profile_from_probe_results(probe_results)
+                persisted_profile = await asyncio.to_thread(
+                    self._load_persisted_embedding_profile, resolve_project_path(index_path)
+                )
+                if generation != self._profile_generation:
+                    continue
+                profile = self._resolve_embedding_profile_candidate(
+                    persisted_profile=persisted_profile,
+                    candidate_profile=candidate_profile,
+                )
+                self._profile_cache = (time.monotonic(), profile, configured_identity)
+                logger.info(
+                    f"表达向量 embedding profile 已标定: marker={profile.marker[:12]} "
+                    f"model={profile.model_name} identifier={profile.model_identifier} "
+                    f"provider={profile.api_provider} dimension={profile.dimension} revision={profile.revision}"
+                )
+                return profile
 
     @staticmethod
     def _validate_embedding_result_profile(
@@ -2170,6 +2198,7 @@ class ExpressionVectorIndex:
             index_path=str(resolved_index_path),
             session_id=embedding_session_id,
         )
+        profile_generation = self._profile_generation
         requested_count = len(normalized_items)
         normalized_items, next_vectors, embedding_failures = await self._embed_expression_items(
             items=normalized_items,
@@ -2178,6 +2207,9 @@ class ExpressionVectorIndex:
         )
 
         async with self._update_lock:
+            if profile_generation != self._profile_generation:
+                # 切换配置期间完成的旧模型请求交给新一轮补建重新处理。
+                return None
             current_fingerprints = await asyncio.to_thread(
                 self._load_current_expression_fingerprints
             )
@@ -2699,6 +2731,8 @@ class ExpressionVectorIndex:
         resolved_index_path = resolve_project_path(index_path)
         effective_batch_size = HISTORY_BACKFILL_BATCH_SIZE
         while True:
+            self._history_backfill_wakeup.clear()
+            resolved_index_path = resolve_project_path(self._history_backfill_index_path or index_path)
             from src.config.config import global_config
 
             if not global_config.expression.use_vector_expression:
@@ -2720,6 +2754,8 @@ class ExpressionVectorIndex:
                     profile=current_profile,
                 )
                 if not finalized:
+                    continue
+                if self._history_backfill_wakeup.is_set():
                     continue
                 self._history_backfill_last_empty_at = time.monotonic()
                 logger.info(
@@ -2748,7 +2784,10 @@ class ExpressionVectorIndex:
                 f"耗时={elapsed_seconds:.2f}s 下批间隔={interval_seconds:.2f}s"
             )
             if interval_seconds > 0:
-                await asyncio.sleep(interval_seconds)
+                try:
+                    await asyncio.wait_for(self._history_backfill_wakeup.wait(), timeout=interval_seconds)
+                except asyncio.TimeoutError:
+                    pass
 
     async def select_candidates(
         self,
