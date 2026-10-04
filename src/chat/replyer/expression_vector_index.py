@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from hashlib import sha256
 from pathlib import Path
@@ -31,7 +31,7 @@ FULL_RECLUSTER_CHANGE_RATIO = 0.05
 CLUSTER_STATE_BOOTSTRAPPING = "BOOTSTRAPPING"
 CLUSTER_STATE_STABLE = "STABLE"
 EMBEDDING_PROFILE_CACHE_SECONDS = 600.0
-EMBEDDING_PROFILE_VERSION = 2
+EMBEDDING_PROFILE_VERSION = 3
 EMBEDDING_PROFILE_MIN_COSINE_SIMILARITY = 0.999
 EMBEDDING_PROFILE_DRIFT_CONFIRMATIONS = 3
 LEGACY_EMBEDDING_PROFILE_MARKER = "__legacy_unmarked__"
@@ -63,6 +63,7 @@ class ExpressionEmbeddingProfile:
     dimension: int
     revision: int
     probe_embeddings: Tuple[Tuple[float, ...], ...]
+    embedding_fingerprint: Dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -175,17 +176,21 @@ def _build_embedding_profile_marker(
     api_provider: str,
     dimension: int,
     revision: int,
+    embedding_fingerprint: Dict[str, Any] | None = None,
+    version: int = EMBEDDING_PROFILE_VERSION,
 ) -> str:
     """使用稳定后端身份和向量空间修订号生成 profile marker。"""
 
     payload = {
-        "version": EMBEDDING_PROFILE_VERSION,
+        "version": version,
         "model_name": model_name,
         "model_identifier": model_identifier,
         "api_provider": api_provider,
         "dimension": int(dimension),
         "revision": int(revision),
     }
+    if version >= 3:
+        payload["embedding_fingerprint"] = embedding_fingerprint or {}
     return sha256(json.dumps(payload, ensure_ascii=False, sort_keys=True).encode("utf-8")).hexdigest()
 
 
@@ -196,6 +201,7 @@ def _build_embedding_profile(
     api_provider: str,
     probe_embeddings: Sequence[Sequence[float]],
     revision: int,
+    embedding_fingerprint: Dict[str, Any] | None = None,
 ) -> ExpressionEmbeddingProfile:
     """根据稳定身份、探针基准和修订号构建 embedding profile。"""
 
@@ -215,6 +221,7 @@ def _build_embedding_profile(
         api_provider=api_provider,
         dimension=dimension,
         revision=revision,
+        embedding_fingerprint=embedding_fingerprint,
     )
     return ExpressionEmbeddingProfile(
         marker=marker,
@@ -224,10 +231,13 @@ def _build_embedding_profile(
         dimension=dimension,
         revision=revision,
         probe_embeddings=normalized_probes,
+        embedding_fingerprint=dict(embedding_fingerprint) if embedding_fingerprint is not None else {},
     )
 
 
-def build_embedding_profile_from_probe_results(results: Sequence[Any]) -> ExpressionEmbeddingProfile:
+def build_embedding_profile_from_probe_results(
+    results: Sequence[Any], *, embedding_fingerprint: Dict[str, Any] | None = None,
+) -> ExpressionEmbeddingProfile:
     """根据固定探针 embedding 结果生成当前 embedding profile。"""
 
     if len(results) != len(EMBEDDING_PROFILE_PROBE_TEXTS):
@@ -256,10 +266,11 @@ def build_embedding_profile_from_probe_results(results: Sequence[Any]) -> Expres
         api_provider=api_provider,
         probe_embeddings=[result.embedding for result in results],
         revision=1,
+        embedding_fingerprint=embedding_fingerprint,
     )
 
 
-def _embedding_profile_identity(profile: ExpressionEmbeddingProfile) -> Tuple[str, str, str, int]:
+def _embedding_profile_identity(profile: ExpressionEmbeddingProfile) -> Tuple[str, str, str, int, str]:
     """返回用于明确区分 embedding 后端的稳定身份。"""
 
     return (
@@ -267,6 +278,7 @@ def _embedding_profile_identity(profile: ExpressionEmbeddingProfile) -> Tuple[st
         profile.model_identifier,
         profile.api_provider,
         profile.dimension,
+        str(profile.embedding_fingerprint.get("hash", "")),
     )
 
 
@@ -328,6 +340,7 @@ def _serialize_embedding_profile(profile: ExpressionEmbeddingProfile) -> dict[st
         "revision": profile.revision,
         "probe_texts": list(EMBEDDING_PROFILE_PROBE_TEXTS),
         "probe_embeddings": [list(embedding) for embedding in profile.probe_embeddings],
+        "embedding_fingerprint": profile.embedding_fingerprint,
     }
 
 
@@ -335,7 +348,7 @@ def _deserialize_embedding_profile(raw_profile: dict[str, Any]) -> ExpressionEmb
     """从索引元数据恢复并校验持久化的 profile 基准。"""
 
     version = int(raw_profile.get("version") or 0)
-    if version != EMBEDDING_PROFILE_VERSION:
+    if version not in {2, EMBEDDING_PROFILE_VERSION}:
         raise ValueError(f"embedding profile 元数据版本不匹配: {version}")
     probe_texts = raw_profile.get("probe_texts")
     if probe_texts != EMBEDDING_PROFILE_PROBE_TEXTS:
@@ -350,6 +363,7 @@ def _deserialize_embedding_profile(raw_profile: dict[str, Any]) -> ExpressionEmb
         api_provider=normalize_text(raw_profile.get("api_provider")),
         probe_embeddings=raw_probe_embeddings,
         revision=int(raw_profile.get("revision") or 0),
+        embedding_fingerprint=raw_profile.get("embedding_fingerprint") if version >= 3 else None,
     )
     if not all((profile.model_name, profile.model_identifier, profile.api_provider)):
         raise ValueError("embedding profile 持久化后端身份为空")
@@ -359,9 +373,21 @@ def _deserialize_embedding_profile(raw_profile: dict[str, Any]) -> ExpressionEmb
             f"embedding profile 持久化维度不一致: stored={stored_dimension}, actual={profile.dimension}"
         )
     stored_marker = normalize_text(raw_profile.get("marker"))
-    if stored_marker != profile.marker:
+    expected_marker = _build_embedding_profile_marker(
+        model_name=profile.model_name, model_identifier=profile.model_identifier,
+        api_provider=profile.api_provider, dimension=profile.dimension, revision=profile.revision,
+        embedding_fingerprint=profile.embedding_fingerprint, version=version,
+    )
+    if stored_marker != expected_marker:
         raise ValueError(
             f"embedding profile 持久化 marker 不一致: stored={stored_marker[:12]}, actual={profile.marker[:12]}"
+        )
+    if version == 2:
+        # 保留旧索引的分组标记；首次新标定会识别出缺失的模型身份并进行补建。
+        return ExpressionEmbeddingProfile(
+            marker=stored_marker, model_name=profile.model_name, model_identifier=profile.model_identifier,
+            api_provider=profile.api_provider, dimension=profile.dimension, revision=profile.revision,
+            probe_embeddings=profile.probe_embeddings,
         )
     return profile
 
@@ -674,6 +700,7 @@ class ExpressionVectorIndex:
             api_provider=candidate_profile.api_provider,
             probe_embeddings=candidate_profile.probe_embeddings,
             revision=persisted_profile.revision + 1,
+            embedding_fingerprint=candidate_profile.embedding_fingerprint,
         )
         logger.warning(
             "embedding 向量空间漂移已连续确认，切换 profile: "
@@ -708,7 +735,7 @@ class ExpressionVectorIndex:
                         return cached_profile
 
                 generation = self._profile_generation
-                from src.services.embedding_service import EmbeddingServiceClient
+                from src.services.embedding_service import EmbeddingServiceClient, resolve_embedding_model_fingerprint
 
                 embedding_client = EmbeddingServiceClient(
                     task_name="embedding",
@@ -720,7 +747,16 @@ class ExpressionVectorIndex:
                     max_concurrent=1,
                     session_id=session_id,
                 )
+                if generation != self._profile_generation:
+                    continue
                 candidate_profile = build_embedding_profile_from_probe_results(probe_results)
+                fingerprint = resolve_embedding_model_fingerprint(
+                    model_name=candidate_profile.model_name, model_identifier=candidate_profile.model_identifier,
+                    api_provider=candidate_profile.api_provider, dimension=candidate_profile.dimension,
+                )
+                candidate_profile = build_embedding_profile_from_probe_results(
+                    probe_results, embedding_fingerprint=fingerprint,
+                )
                 persisted_profile = await asyncio.to_thread(
                     self._load_persisted_embedding_profile, resolve_project_path(index_path)
                 )
