@@ -368,7 +368,12 @@ async def _await_shutdown_step(awaitable, *, timeout: float, step_name: str) -> 
         logger.warning(f"{step_name} 超时，继续执行后续关停步骤")
         return False
     except asyncio.CancelledError:
-        raise
+        # 当前关闭任务收到 cancel() 时仍向上传播；子步骤的取消不能跳过后续清理。
+        current_task = asyncio.current_task()
+        if current_task is not None and current_task.cancelling():
+            raise
+        logger.warning(f"{step_name} 内部任务被取消，继续执行后续关停步骤")
+        return False
     except Exception as exc:
         logger.warning(f"{step_name} 失败，继续执行后续关停步骤: {exc}", exc_info=True)
         return False

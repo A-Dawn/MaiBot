@@ -182,24 +182,107 @@ def test_image_sync_timeout_still_runs_memory_cleanup(bot, image_exhausts_stage)
         loop.close()
 
 
-@pytest.mark.parametrize("image_failure", [RuntimeError, asyncio.CancelledError])
+@pytest.mark.parametrize("image_failure", ["runtime_error", "cancelled_error", "cancelled_description_task"])
 def test_image_sync_failure_or_cancellation_is_not_success(bot, image_failure):
     ns, system, events = bot()
 
+    if image_failure == "cancelled_description_task":
+        # 只加载真实 shutdown 方法，隔离图片管理器的数据库及模型依赖。
+        path = ROOT / "src/chat/image_system/image_manager.py"
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        manager = next(node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == "ImageManager")
+        shutdown = next(
+            node for node in manager.body if isinstance(node, ast.AsyncFunctionDef) and node.name == "shutdown"
+        )
+        image_ns = {"asyncio": asyncio}
+        exec(compile(ast.Module(body=[shutdown], type_ignores=[]), str(path), "exec"), image_ns)
+
     async def image_sync():
         events.append("image_sync")
-        raise image_failure("fixture image sync")
+        if image_failure != "cancelled_description_task":
+            error = RuntimeError if image_failure == "runtime_error" else asyncio.CancelledError
+            raise error("fixture image sync")
+
+        async def sync_description():
+            # 让真实 shutdown 的 gather 先接管子任务，再取消子任务自身。
+            await asyncio.sleep(0)
+            asyncio.current_task().cancel()
+            await asyncio.sleep(0)
+
+        sync_task = asyncio.create_task(sync_description())
+        image_manager = SimpleNamespace(_pending_description_tasks={}, _description_sync_tasks={sync_task})
+        sync_task.add_done_callback(image_manager._description_sync_tasks.discard)
+        await image_ns["shutdown"](image_manager)
+
+    async def remaining():
+        try:
+            await asyncio.Event().wait()
+        finally:
+            events.append("remaining_cancelled")
 
     sys.modules["src.chat.image_system.image_manager"].image_manager.shutdown = image_sync
     loop = asyncio.new_event_loop()
     try:
-        assert not ns["_run_graceful_shutdown"](loop, system)
+        remaining_task = loop.create_task(remaining())
+        loop.run_until_complete(asyncio.sleep(0))
+        shutdown_task = loop.create_task(ns["graceful_shutdown"](system))
+        assert loop.run_until_complete(shutdown_task) is False
+        assert shutdown_task.cancelling() == 0
+        cleanup = [
+            "image_sync",
+            "memory_producer_stop",
+            "memory_stop",
+            "emoji_stop",
+            "mcp_close",
+            "manager_stop",
+            "remaining_cancelled",
+        ]
+        assert all(events.count(step) == 1 for step in cleanup)
+        assert [events.index(step) for step in cleanup] == sorted(events.index(step) for step in cleanup)
+        assert "metadata_close" in events
+        assert "writer_lock_release" in events
         assert "startup.shutdown_completed" not in events
-        if image_failure is RuntimeError:
-            assert "memory_producer_stop" in events
-            assert "memory_stop" in events
+        if image_failure != "runtime_error":
+            assert "等待图片描述同步 内部任务被取消，继续执行后续关停步骤" in events
     finally:
+        remaining_task.cancel()
+        loop.run_until_complete(asyncio.gather(remaining_task, return_exceptions=True))
         loop.close()
+
+
+@pytest.mark.parametrize("cancel_target", ["helper", "graceful_shutdown"])
+def test_external_shutdown_task_cancellation_propagates(bot, cancel_target):
+    ns, system, events = bot()
+
+    async def run():
+        started = asyncio.Event()
+
+        async def image_sync():
+            started.set()
+            await asyncio.Event().wait()
+
+        sys.modules["src.chat.image_system.image_manager"].image_manager.shutdown = image_sync
+        awaitable = (
+            ns["_await_shutdown_step"](image_sync(), timeout=5.0, step_name="等待图片描述同步")
+            if cancel_target == "helper"
+            else ns["graceful_shutdown"](system)
+        )
+        task = asyncio.create_task(awaitable)
+        try:
+            await asyncio.wait_for(started.wait(), timeout=1.0)
+            assert task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await asyncio.wait_for(task, timeout=1.0)
+            assert task.cancelled()
+            assert task.cancelling() == 1
+        finally:
+            if not task.done():
+                task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+
+    asyncio.run(run())
+    assert "等待图片描述同步 内部任务被取消，继续执行后续关停步骤" not in events
+    assert "startup.shutdown_completed" not in events
 
 
 @pytest.mark.parametrize("pre_cleanup_exhausted", [False, True])
