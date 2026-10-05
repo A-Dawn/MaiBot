@@ -1,6 +1,8 @@
 """进程级关停状态。"""
 
 from threading import Event
+from types import FrameType
+from typing import Callable, Iterator
 
 import contextlib
 import signal
@@ -22,7 +24,7 @@ def is_shutdown_requested() -> bool:
 
 
 @contextlib.contextmanager
-def application_signal_handlers(handler):
+def application_signal_handlers(handler: Callable[[int, FrameType | None], None]) -> Iterator[None]:
     """Worker 统一拥有停止信号，包括进程内的第三方 Uvicorn 服务。
 
     Uvicorn 的 capture_signals 会覆盖应用 handler，并在退出时重新发送信号。
@@ -34,8 +36,11 @@ def application_signal_handlers(handler):
     signals = [signal.SIGINT, signal.SIGTERM]
     if hasattr(signal, "SIGBREAK"):
         signals.append(signal.SIGBREAK)
-    previous = {sig: signal.signal(sig, handler) for sig in signals}
+    # 依赖 uvicorn 非公开调用链 Server.serve() → capture_signals()；uv.lock 锁定并验证于 0.45.0。
+    # maim_message 的额外 API 会自行创建 uvicorn.Server，无法只在本项目构造处子类化，因此替换类属性。
+    # 先读取属性：未来版本移除该方法时，在修改任何信号处理器之前明确失败。
     capture_signals = Server.capture_signals
+    previous = {sig: signal.signal(sig, handler) for sig in signals}
 
     @contextlib.contextmanager
     def application_owned_signals(_server):

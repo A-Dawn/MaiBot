@@ -2,7 +2,7 @@ from dataclasses import replace
 from datetime import datetime
 from enum import Enum
 from pathlib import Path
-from typing import Any, Mapping, Sequence
+from typing import Any, Dict, Mapping, Sequence
 
 import base64
 import binascii
@@ -19,6 +19,7 @@ from src.llm_models.model_client.base_client import (
     AudioTranscriptionRequest,
     ClientRequest,
     EmbeddingRequest,
+    ImageEmbeddingRequest,
     GenerationAttempt,
     RequestTraceContext,
     ResponseRequest,
@@ -613,6 +614,7 @@ def serialize_model_info_snapshot(model_info: ModelInfo) -> dict[str, Any]:
         "max_tokens": model_info.max_tokens,
         "model_identifier": model_info.model_identifier,
         "name": model_info.name,
+        "send_temperature": model_info.send_temperature,
         "temperature": model_info.temperature,
         "visual": model_info.visual,
     }
@@ -630,6 +632,7 @@ def deserialize_model_info_snapshot(raw_model_info: Any) -> ModelInfo:
         max_tokens=raw_model_info.get("max_tokens"),
         model_identifier=str(raw_model_info.get("model_identifier") or ""),
         name=str(raw_model_info.get("name") or ""),
+        send_temperature=bool(raw_model_info.get("send_temperature", True)),
         temperature=raw_model_info.get("temperature"),
         visual=bool(raw_model_info.get("visual", False)),
     )
@@ -701,6 +704,22 @@ def serialize_embedding_request_snapshot(request: EmbeddingRequest) -> dict[str,
     }
 
 
+def serialize_image_embedding_request_snapshot(request: ImageEmbeddingRequest) -> dict[str, Any]:
+    """序列化图片嵌入请求，只保留可诊断的摘要。"""
+
+    from hashlib import sha256
+
+    return {
+        "byte_size": len(request.image_bytes),
+        "content_sha256": sha256(request.image_bytes).hexdigest(),
+        "extra_params": _json_friendly(dict(request.extra_params)),
+        "mime_type": request.mime_type,
+        "model_info": serialize_model_info_snapshot(request.model_info),
+        "preprocess_version": request.preprocess_version,
+        "request_kind": "image_embedding",
+    }
+
+
 def serialize_audio_request_snapshot(request: AudioTranscriptionRequest) -> dict[str, Any]:
     """序列化音频转写请求。"""
     return {
@@ -739,6 +758,8 @@ def serialize_client_request_snapshot(request: ClientRequest) -> dict[str, Any]:
         return serialize_response_request_snapshot(request)
     if isinstance(request, EmbeddingRequest):
         return serialize_embedding_request_snapshot(request)
+    if isinstance(request, ImageEmbeddingRequest):
+        return serialize_image_embedding_request_snapshot(request)
     return serialize_audio_request_snapshot(request)
 
 
@@ -957,16 +978,19 @@ def _build_display_path(file_path: Path) -> str:
         return resolved_path.as_posix()
 
 
-def _write_snapshot(snapshot_path: Path, payload: dict[str, Any]) -> None:
+def _write_snapshot(
+    snapshot_path: Path, payload: dict[str, Any], *, image_assets: Dict[Path, bytes] | None = None
+) -> None:
     """原子更新单个逻辑请求的失败记录。"""
 
     payload["metadata"]["updated_at"] = datetime.now().isoformat(timespec="seconds")
-    temporary_path = snapshot_path.with_suffix(".json.tmp")
-    temporary_path.write_text(
+    from src.maisaka.display.prompt_preview_logger import PromptPreviewLogger
+
+    PromptPreviewLogger.write_record_file(
+        snapshot_path,
         json.dumps(payload, ensure_ascii=False, indent=2, default=str),
-        encoding="utf-8",
+        image_assets if image_assets is not None else {},
     )
-    temporary_path.replace(snapshot_path)
 
 
 def build_replay_command(snapshot_path: Path) -> str:
@@ -1009,98 +1033,102 @@ def save_failed_request_snapshot(
     trace_context: RequestTraceContext | None = None,
 ) -> Path | None:
     """保存或追加一次逻辑请求的失败尝试。"""
-    try:
-        active_trace_context = trace_context or RequestTraceContext()
-        generation_attempt = record_failed_generation_attempt(
-            api_provider=api_provider,
-            client_type=client_type,
-            error=error,
-            model_info=model_info,
-            operation=operation,
-            trace_context=active_trace_context,
-        )
-        error.generation_trace_context = active_trace_context
-        error.request_snapshot_attempt = generation_attempt.provider_attempt
-        snapshot_path = (
-            Path(active_trace_context.snapshot_path).resolve()
-            if active_trace_context.snapshot_path
-            else _build_snapshot_path(active_trace_context)
-        )
-        active_trace_context.snapshot_path = str(snapshot_path)
+    from src.maisaka.display.prompt_preview_logger import PromptPreviewLogger
 
-        if snapshot_path.is_file():
-            snapshot_payload = json.loads(snapshot_path.read_text(encoding="utf-8"))
-            if "request_items" not in snapshot_payload:
-                snapshot_payload["schema_version"] = SNAPSHOT_VERSION
-                snapshot_payload["presentation"] = {"output_title": "输出 Items"}
-                snapshot_payload["request_items"] = _build_structured_items(internal_request)
-                snapshot_payload["output_items"] = []
-                snapshot_payload.pop("messages", None)
-                snapshot_payload.pop("output", None)
-        else:
-            request_kind = str(internal_request.get("request_kind") or "request")
-            created_at = datetime.fromtimestamp(active_trace_context.started_at).isoformat(timespec="seconds")
-            snapshot_payload = {
-                "schema_version": SNAPSHOT_VERSION,
-                "request": {
-                    "kind": request_kind,
-                    "operation": operation,
-                    "request_type": active_trace_context.request_type,
-                    "task_name": active_trace_context.task_name,
-                },
-                "metadata": {
+    try:
+        with PromptPreviewLogger.collect_image_assets() as image_assets:
+            active_trace_context = trace_context or RequestTraceContext()
+            generation_attempt = record_failed_generation_attempt(
+                api_provider=api_provider,
+                client_type=client_type,
+                error=error,
+                model_info=model_info,
+                operation=operation,
+                trace_context=active_trace_context,
+            )
+            error.generation_trace_context = active_trace_context
+            error.request_snapshot_attempt = generation_attempt.provider_attempt
+            snapshot_path = (
+                Path(active_trace_context.snapshot_path).resolve()
+                if active_trace_context.snapshot_path
+                else _build_snapshot_path(active_trace_context)
+            )
+            active_trace_context.snapshot_path = str(snapshot_path)
+
+            if snapshot_path.is_file():
+                snapshot_payload = json.loads(snapshot_path.read_text(encoding="utf-8"))
+                if "request_items" not in snapshot_payload:
+                    snapshot_payload["schema_version"] = SNAPSHOT_VERSION
+                    snapshot_payload["presentation"] = {"output_title": "输出 Items"}
+                    snapshot_payload["request_items"] = _build_structured_items(internal_request)
+                    snapshot_payload["output_items"] = []
+                    snapshot_payload.pop("messages", None)
+                    snapshot_payload.pop("output", None)
+            else:
+                request_kind = str(internal_request.get("request_kind") or "request")
+                created_at = datetime.fromtimestamp(active_trace_context.started_at).isoformat(timespec="seconds")
+                snapshot_payload = {
+                    "schema_version": SNAPSHOT_VERSION,
+                    "request": {
+                        "kind": request_kind,
+                        "operation": operation,
+                        "request_type": active_trace_context.request_type,
+                        "task_name": active_trace_context.task_name,
+                    },
+                    "metadata": {
+                        "client_type": client_type,
+                        "created_at": created_at,
+                        "model_name": model_info.name,
+                        "provider_name": api_provider.name,
+                        "request_id": active_trace_context.request_id,
+                        "session_id": active_trace_context.session_id,
+                        "status": "retrying",
+                        "updated_at": created_at,
+                    },
+                    "presentation": {"output_title": "输出 Items"},
+                    "request_items": _build_structured_items(internal_request),
+                    "output_items": [],
+                    "tool_definitions": internal_request.get("tool_options") or [],
+                    "request_parameters": _build_request_parameters(internal_request),
+                    "model_info": serialize_model_info_snapshot(model_info),
+                    "api_provider": serialize_api_provider_snapshot(api_provider),
+                    "generation_attempts": [],
+                    "replay": {
+                        "command": build_replay_command(snapshot_path),
+                        "file_uri": snapshot_path.as_uri(),
+                        "script_path": str(REPLAY_SCRIPT_PATH),
+                    },
+                }
+
+            attempt_number = generation_attempt.provider_attempt
+            attempt_payload = serialize_generation_attempt(generation_attempt)
+            attempts = snapshot_payload.setdefault("generation_attempts", [])
+            snapshot_payload.pop("attempts", None)
+            snapshot_payload.pop("provider_request", None)
+            existing_attempt = next(
+                (
+                    item
+                    for item in attempts
+                    if item.get("provider_attempt") == attempt_number
+                    and item.get("model") == model_info.model_identifier
+                ),
+                None,
+            )
+            if existing_attempt is None:
+                attempts.append(attempt_payload)
+            else:
+                existing_attempt.update(attempt_payload)
+            snapshot_payload["metadata"].update(
+                {
                     "client_type": client_type,
-                    "created_at": created_at,
                     "model_name": model_info.name,
                     "provider_name": api_provider.name,
-                    "request_id": active_trace_context.request_id,
-                    "session_id": active_trace_context.session_id,
                     "status": "retrying",
-                    "updated_at": created_at,
-                },
-                "presentation": {"output_title": "输出 Items"},
-                "request_items": _build_structured_items(internal_request),
-                "output_items": [],
-                "tool_definitions": internal_request.get("tool_options") or [],
-                "request_parameters": _build_request_parameters(internal_request),
-                "model_info": serialize_model_info_snapshot(model_info),
-                "api_provider": serialize_api_provider_snapshot(api_provider),
-                "generation_attempts": [],
-                "replay": {
-                    "command": build_replay_command(snapshot_path),
-                    "file_uri": snapshot_path.as_uri(),
-                    "script_path": str(REPLAY_SCRIPT_PATH),
-                },
-            }
-
-        attempt_number = generation_attempt.provider_attempt
-        attempt_payload = serialize_generation_attempt(generation_attempt)
-        attempts = snapshot_payload.setdefault("generation_attempts", [])
-        snapshot_payload.pop("attempts", None)
-        snapshot_payload.pop("provider_request", None)
-        existing_attempt = next(
-            (
-                item
-                for item in attempts
-                if item.get("provider_attempt") == attempt_number and item.get("model") == model_info.model_identifier
-            ),
-            None,
-        )
-        if existing_attempt is None:
-            attempts.append(attempt_payload)
-        else:
-            existing_attempt.update(attempt_payload)
-        snapshot_payload["metadata"].update(
-            {
-                "client_type": client_type,
-                "model_name": model_info.name,
-                "provider_name": api_provider.name,
-                "status": "retrying",
-            }
-        )
-        _write_snapshot(snapshot_path, snapshot_payload)
-        _trim_llm_request_snapshots()
-        return snapshot_path
+                }
+            )
+            _write_snapshot(snapshot_path, snapshot_payload, image_assets=image_assets)
+            _trim_llm_request_snapshots()
+            return snapshot_path
     except Exception:
         logger.exception("保存 LLM 失败请求快照时发生异常")
         return None
@@ -1208,8 +1236,13 @@ def has_request_snapshot(exception: Exception) -> bool:
     return False
 
 
-def format_request_snapshot_log_info(exception: Exception) -> str:
-    """将异常上的快照信息格式化为日志片段。"""
+def format_request_snapshot_log_info(exception: Exception, *, include_snapshot_path: bool = True) -> str:
+    """将异常上的快照信息格式化为日志片段。
+
+    Args:
+        exception: 携带请求快照信息的异常。
+        include_snapshot_path: 是否输出本地快照路径；模型运行日志默认只需要可重放命令。
+    """
     for candidate in (exception, getattr(exception, "__cause__", None)):
         if candidate is None:
             continue
@@ -1220,10 +1253,10 @@ def format_request_snapshot_log_info(exception: Exception) -> str:
             continue
 
         lines: list[str] = []
-        if snapshot_path:
+        if include_snapshot_path and snapshot_path:
             lines.append(f"调用完整信息（如果需要求助，请发送该文本）: {snapshot_path}")
         if replay_command:
-            lines.append(f"使用以下命令重新请求: {replay_command}")
+            lines.append(f"调用完整信息: {replay_command}")
         if lines:
             return "\n  " + "\n  ".join(lines)
 

@@ -1,7 +1,7 @@
 """不启动真实 Bot；覆盖信号、关闭次序、失败状态以及 Runner 的重启协议。"""
 
-from unittest.mock import Mock
 from types import SimpleNamespace
+from unittest.mock import Mock
 
 import ast
 import asyncio
@@ -48,7 +48,13 @@ def test_shutdown_once_and_memory_before_remaining_cancellation(bot, fail):
         assert ns["_run_graceful_shutdown"](loop, system) is (not fail)
         assert ns["_run_graceful_shutdown"](loop, system) is (not fail)
         assert events.count("memory_stop") == 1
-        assert events.index("memory_producer_stop") < events.index("memory_stop") < events.index("remaining_cancelled")
+        assert events.count("image_sync") == 1
+        assert (
+            events.index("image_sync")
+            < events.index("memory_producer_stop")
+            < events.index("memory_stop")
+            < events.index("remaining_cancelled")
+        )
         assert ("startup.shutdown_completed" in events) is (not fail)
         if not fail:
             assert events.index("persist") < events.index("metadata_close") < events.index("writer_lock_release")
@@ -76,7 +82,9 @@ def test_worker_signals_survive_uvicorn_and_cancel_only_once(bot, signals):
         async def _serve(self, sockets=None):
             for sig in signals:
                 signal.raise_signal(sig)
-            await asyncio.Event().wait()
+            # uvicorn 若绕过 capture_signals 接管信号，应限时明确失败。
+            await asyncio.sleep(5)
+            raise AssertionError("停止信号被 uvicorn 截获，未交给 Worker 的关闭处理器")
 
     try:
         with application_signal_handlers(ns["_mark_shutdown_and_interrupt"]):
@@ -108,6 +116,129 @@ def test_repeated_signal_during_memory_shutdown_does_not_cancel_it(bot):
         assert "metadata_close" in events
     finally:
         loop.close()
+
+
+def test_missing_uvicorn_capture_signals_fails_before_changing_handlers(monkeypatch):
+    monkeypatch.delattr(Server, "capture_signals")
+    install_handler = Mock()
+    monkeypatch.setattr(signal, "signal", install_handler)
+    with pytest.raises(AttributeError, match="capture_signals"):
+        with application_signal_handlers(Mock()):
+            pytest.fail("缺少 capture_signals 时不应进入信号守护作用域")
+    install_handler.assert_not_called()
+
+
+def test_signal_guard_fails_boundedly_when_uvicorn_bypasses_capture(bot, monkeypatch):
+    original_capture = Server.capture_signals
+
+    async def bypass_capture(server, sockets=None):
+        # 模拟未来 serve() 不再读取被替换的类属性，而直接捕获应用信号。
+        with original_capture(server):
+            await server._serve(sockets)
+
+    monkeypatch.setattr(Server, "serve", bypass_capture)
+    with pytest.raises(AssertionError, match="停止信号被 uvicorn 截获"):
+        test_worker_signals_survive_uvicorn_and_cancel_only_once(bot, (signal.SIGTERM,))
+
+
+@pytest.mark.parametrize("image_exhausts_stage", [False, True])
+def test_image_sync_timeout_still_runs_memory_cleanup(bot, image_exhausts_stage):
+    ns, system, events = bot()
+    # 缩小所有阶段但保持比例；使用真实 wait_for 验证超时取消后的实际协程执行。
+    for name in (
+        "SHUTDOWN_TIMEOUT",
+        "IMAGE_SYNC_TIMEOUT",
+        "MEMORY_WRITER_TIMEOUT",
+        "MEMORY_KERNEL_TIMEOUT",
+        "FINAL_CLEANUP_TIMEOUT",
+    ):
+        ns[name] /= 100
+    if image_exhausts_stage:
+        ns["SHUTDOWN_TIMEOUT"] = (
+            ns["IMAGE_SYNC_TIMEOUT"]
+            + ns["MEMORY_WRITER_TIMEOUT"]
+            + ns["MEMORY_KERNEL_TIMEOUT"]
+            + ns["FINAL_CLEANUP_TIMEOUT"]
+        )
+
+    async def image_sync():
+        events.append("image_sync")
+        try:
+            await asyncio.Event().wait()
+        finally:
+            events.append("image_sync_cancelled")
+
+    sys.modules["src.chat.image_system.image_manager"].image_manager.shutdown = image_sync
+    loop = asyncio.new_event_loop()
+    try:
+        assert not ns["_run_graceful_shutdown"](loop, system)
+        assert not ns["_run_graceful_shutdown"](loop, system)
+        assert events.count("image_sync") == events.count("memory_producer_stop") == events.count("memory_stop") == 1
+        assert events.index("image_sync_cancelled") < events.index("memory_producer_stop") < events.index("memory_stop")
+        assert "metadata_close" in events
+        assert "manager_stop" in events
+        assert "startup.shutdown_completed" not in events
+    finally:
+        loop.close()
+
+
+@pytest.mark.parametrize("image_failure", [RuntimeError, asyncio.CancelledError])
+def test_image_sync_failure_or_cancellation_is_not_success(bot, image_failure):
+    ns, system, events = bot()
+
+    async def image_sync():
+        events.append("image_sync")
+        raise image_failure("fixture image sync")
+
+    sys.modules["src.chat.image_system.image_manager"].image_manager.shutdown = image_sync
+    loop = asyncio.new_event_loop()
+    try:
+        assert not ns["_run_graceful_shutdown"](loop, system)
+        assert "startup.shutdown_completed" not in events
+        if image_failure is RuntimeError:
+            assert "memory_producer_stop" in events
+            assert "memory_stop" in events
+    finally:
+        loop.close()
+
+
+@pytest.mark.parametrize("pre_cleanup_exhausted", [False, True])
+@pytest.mark.parametrize("writer_exhausted", [False, True])
+def test_cleanup_stages_reserve_budget_after_earlier_timeouts(
+    bot, monkeypatch, pre_cleanup_exhausted, writer_exhausted
+):
+    ns, system, events = bot()
+    clock = [0.0]
+    ns["time"] = SimpleNamespace(monotonic=lambda: clock[0])
+    timeouts = {}
+
+    async def wait_for(awaitable, timeout):
+        # 模拟 wait_for(timeout=0) 的真实语义：协程体根本不会获得执行机会。
+        if timeout <= 0:
+            awaitable.close()
+            raise asyncio.TimeoutError
+        await awaitable
+        step = events[-1]
+        timeouts[step] = timeout
+        if step == "plugin_stop":
+            clock[0] = ns["_shutdown_deadline"] - (0 if pre_cleanup_exhausted else ns["IMAGE_SYNC_TIMEOUT"])
+        if (
+            step == "image_sync"
+            or (step == "memory_producer_stop" and writer_exhausted)
+            or step == "writer_lock_release"
+        ):
+            clock[0] += timeout
+            raise asyncio.TimeoutError
+
+    monkeypatch.setattr(asyncio, "wait_for", wait_for)
+    assert not asyncio.run(ns["graceful_shutdown"](system))
+    assert ("image_sync" in events) is (not pre_cleanup_exhausted)
+    assert events.count("memory_producer_stop") == events.count("memory_stop") == 1
+    assert timeouts["memory_producer_stop"] == ns["MEMORY_WRITER_TIMEOUT"]
+    assert timeouts["writer_lock_release"] == ns["MEMORY_KERNEL_TIMEOUT"]
+    assert timeouts["manager_stop"] == ns["FINAL_CLEANUP_TIMEOUT"]
+    assert clock[0] <= ns["SHUTDOWN_TIMEOUT"]
+    assert "startup.shutdown_completed" not in events
 
 
 def test_shutdown_step_timeout_and_cancelled_shutdown_are_failures(bot):
@@ -321,7 +452,9 @@ def test_real_worker_entrypoint_exit_semantics(fail, restart, code):
         timeout=10,
     )
     assert result.returncode == code, result.stdout + result.stderr
-    assert result.stdout.splitlines().count("memory_stop") == 1
+    lines = result.stdout.splitlines()
+    assert lines.count("image_sync") == lines.count("memory_producer_stop") == lines.count("memory_stop") == 1
+    assert lines.index("image_sync") < lines.index("memory_producer_stop") < lines.index("memory_stop")
     assert ("startup.shutdown_completed" in result.stdout) is (not fail)
     assert ("metadata_close" in result.stdout) is (not fail)
 
@@ -398,9 +531,22 @@ def test_posix_real_runner_worker_shutdown(fail, early):
         while not lines.empty():
             output.append(lines.get_nowait())
         text = "".join(output)
-        assert text.splitlines().count("memory_stop") == 1
+        event_lines = text.splitlines()
+        assert (
+            event_lines.count("image_sync")
+            == event_lines.count("memory_producer_stop")
+            == event_lines.count("memory_stop")
+            == 1
+        )
+        assert (
+            event_lines.index("image_sync")
+            < event_lines.index("memory_producer_stop")
+            < event_lines.index("memory_stop")
+        )
         assert ("startup.shutdown_completed" in text) is (not fail)
         assert "runner_exit=" + str(1 if fail else 0) in text
+        # 服务标记显式 flush；Worker 最后的普通 print 可能被 os._exit 丢弃，不能用作顺序证据。
+        assert event_lines.index("memory_stop") < event_lines.index("runner_exit=" + str(1 if fail else 0))
     finally:
         if process.poll() is None:
             process.kill()
@@ -438,9 +584,15 @@ def test_worker_consumes_shutdown_across_task_handoff(shutdown_at, repeated):
     assert ("schedule_cancelled" in lines) is scheduler_started
     if scheduler_started:
         assert lines.index("schedule_cancelled") < lines.index("startup.shutdown_started")
-    assert lines.count("startup.shutdown_started") == lines.count("memory_stop") == 1
+    assert lines.count("startup.shutdown_started") == lines.count("image_sync") == lines.count("memory_stop") == 1
     assert lines.count("startup.shutdown_completed") == 1
-    assert lines.index("memory_stop") < lines.index("metadata_close") < lines.index("startup.shutdown_completed")
+    assert (
+        lines.index("image_sync")
+        < lines.index("memory_producer_stop")
+        < lines.index("memory_stop")
+        < lines.index("metadata_close")
+        < lines.index("startup.shutdown_completed")
+    )
 
 
 @pytest.mark.parametrize("point", ["before_publish", "after_publish", "after_check"])

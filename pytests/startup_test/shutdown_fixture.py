@@ -9,8 +9,8 @@ import asyncio
 import os
 import signal
 import sys
-import traceback
 import time
+import traceback
 
 from src.common.shutdown import application_signal_handlers
 
@@ -48,6 +48,7 @@ def load_bot_functions(events, *, memory_failure=False, memory_delay=0, install_
             "get_plugin_runtime_manager": lambda: SimpleNamespace(stop=record("plugin_stop"))
         },
         "src.A_memorix.host_service": {"a_memorix_host_service": SimpleNamespace(stop=stop_memory)},
+        "src.chat.image_system.image_manager": {"image_manager": SimpleNamespace(shutdown=record("image_sync"))},
         "src.services.memory_flow_service": {
             "memory_automation_service": SimpleNamespace(shutdown=record("memory_producer_stop"))
         },
@@ -83,11 +84,19 @@ def load_bot_functions(events, *, memory_failure=False, memory_delay=0, install_
         "_shutdown_signal_count": 0,
         "_shutdown_task": None,
         "_shutdown_deadline": None,
-        "SHUTDOWN_TIMEOUT": 50.0,
     }
     tree = ast.parse((ROOT / "bot.py").read_text(encoding="utf-8"))
     functions = [node for node in tree.body if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))]
-    exec(compile(ast.Module(body=functions, type_ignores=[]), str(ROOT / "bot.py"), "exec"), namespace)
+    # 预算常量也取自实际 bot，避免 fixture 的旧数值掩盖生命周期回归。
+    budgets = [
+        node
+        for node in tree.body
+        if isinstance(node, ast.Assign)
+        and len(node.targets) == 1
+        and isinstance(node.targets[0], ast.Name)
+        and node.targets[0].id.endswith("_TIMEOUT")
+    ]
+    exec(compile(ast.Module(body=budgets + functions, type_ignores=[]), str(ROOT / "bot.py"), "exec"), namespace)
     system = SimpleNamespace(
         webui_server=SimpleNamespace(shutdown=record("webui_stop")), app=SimpleNamespace(stop=record("app_stop"))
     )

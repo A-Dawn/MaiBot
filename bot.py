@@ -21,6 +21,10 @@ _shutdown_signal_count: int = 0
 _shutdown_task: asyncio.Task[bool] | None = None
 _shutdown_deadline: float | None = None
 SHUTDOWN_TIMEOUT = 50.0  # 为 Runner 的 60 秒硬截止保留余量。
+IMAGE_SYNC_TIMEOUT = 5.0
+MEMORY_WRITER_TIMEOUT = 5.0
+MEMORY_KERNEL_TIMEOUT = 30.0
+FINAL_CLEANUP_TIMEOUT = 5.0
 _RunResultT = TypeVar("_RunResultT")
 # print("-----------------------------------------")
 # print("\n\n\n\n\n")
@@ -212,7 +216,9 @@ def easter_egg():
 
 async def graceful_shutdown(main_system: MainSystem | None = None) -> bool:
     global _shutdown_deadline
-    _shutdown_deadline = time.monotonic() + SHUTDOWN_TIMEOUT
+    shutdown_deadline = time.monotonic() + SHUTDOWN_TIMEOUT
+    # 前置关闭（含图片同步）共享 10 秒，不能挤占写入者、内核和最终任务清理的预算。
+    _shutdown_deadline = shutdown_deadline - MEMORY_WRITER_TIMEOUT - MEMORY_KERNEL_TIMEOUT - FINAL_CLEANUP_TIMEOUT
     try:
         request_shutdown("graceful_shutdown")
         logger.info(t("startup.shutdown_started"))
@@ -261,6 +267,16 @@ async def graceful_shutdown(main_system: MainSystem | None = None) -> bool:
             and success
         )
 
+        # 与 src/main.py 一致：先等待图片描述写回，再停止记忆写入者及内核。
+        from src.chat.image_system.image_manager import image_manager
+
+        success = (
+            await _await_shutdown_step(
+                image_manager.shutdown(), timeout=IMAGE_SYNC_TIMEOUT, step_name="等待图片描述同步"
+            )
+            and success
+        )
+
         # 先停止记忆写入者，再等待内核持久化、关闭存储和释放 writer lock。
         # 必须早于 remaining_tasks 的粗粒度取消。
         from src.A_memorix.host_service import a_memorix_host_service
@@ -268,14 +284,22 @@ async def graceful_shutdown(main_system: MainSystem | None = None) -> bool:
         from src.emoji_system.emoji_manager import emoji_manager
         from src.mcp_module.service import get_mcp_service
 
+        # 分阶段推进截止时间；前一阶段超时后，关键协程仍有非零执行窗口。
+        _shutdown_deadline += MEMORY_WRITER_TIMEOUT
         success = (
-            await _await_shutdown_step(memory_automation_service.shutdown(), timeout=5.0, step_name="停止记忆自动写入")
+            await _await_shutdown_step(
+                memory_automation_service.shutdown(), timeout=MEMORY_WRITER_TIMEOUT, step_name="停止记忆自动写入"
+            )
             and success
         )
+        _shutdown_deadline += MEMORY_KERNEL_TIMEOUT
         success = (
-            await _await_shutdown_step(a_memorix_host_service.stop(), timeout=30.0, step_name="关闭 A_Memorix 并持久化")
+            await _await_shutdown_step(
+                a_memorix_host_service.stop(), timeout=MEMORY_KERNEL_TIMEOUT, step_name="关闭 A_Memorix 并持久化"
+            )
             and success
         )
+        _shutdown_deadline = shutdown_deadline
         try:
             emoji_manager.shutdown()
         except Exception:
@@ -335,7 +359,7 @@ def _shutdown_time_left(step_timeout: float) -> float:
 
 
 async def _await_shutdown_step(awaitable, *, timeout: float, step_name: str) -> bool:
-    """步骤共享关闭预算；不响应取消/阻塞事件循环的代码最终由 Runner 有界终止。"""
+    """步骤共享当前阶段预算；不响应取消/阻塞事件循环的代码最终由 Runner 有界终止。"""
 
     try:
         await asyncio.wait_for(awaitable, timeout=_shutdown_time_left(timeout))
