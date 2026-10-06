@@ -385,7 +385,13 @@ def test_emoji_failure_does_not_skip_later_cleanup(bot):
 def runner(monkeypatch):
     handlers = {}
     clock = [0.0]
-    monkeypatch.setattr(process_runner.signal, "signal", lambda sig, handler: handlers.setdefault(sig, handler))
+
+    def install_handler(sig, handler):
+        previous = handlers.get(sig, signal.getsignal(sig))
+        handlers[sig] = handler
+        return previous
+
+    monkeypatch.setattr(process_runner.signal, "signal", install_handler)
     monkeypatch.setattr(process_runner.time, "monotonic", lambda: clock[0])
     monkeypatch.setattr(process_runner.time, "sleep", lambda delay: clock.__setitem__(0, clock[0] + delay))
     monkeypatch.setattr(process_runner, "WORKER_SHUTDOWN_TIMEOUT", 0.3)
@@ -509,8 +515,10 @@ def test_runner_restart_42_and_exited_worker_signal(runner, monkeypatch):
     assert clock[0] >= 1
 
     finished = Mock(returncode=0)
+    previous_handler = handlers[signal.SIGTERM]
 
     def poll():
+        assert handlers[signal.SIGTERM] is not previous_handler
         handlers[signal.SIGTERM](signal.SIGTERM, None)
         return 0
 
@@ -588,13 +596,165 @@ def test_early_worker_guard_runs_before_business_imports(bot, monkeypatch):
     assert not events  # Business services are not accessed before the loop is ready.
 
 
+def _cleanup_process_group(process):
+    """即使 Runner 已退出，也清理独立会话中可能仍存活的 Worker。"""
+    try:
+        os.killpg(process.pid, signal.SIGKILL)
+    except ProcessLookupError:
+        pass
+    process.wait(timeout=5)
+
+
+@pytest.mark.parametrize("outcome", ["confirmed", "eof", "sigbreak", "pending_stop"])
+def test_confirmation_restores_deferred_handlers(bot, monkeypatch, outcome):
+    ns, _, _ = bot()
+    monkeypatch.setattr(signal, "SIGBREAK", 21, raising=False)
+    original = ns["_mark_shutdown_and_interrupt"]
+    handlers = {sig: original for sig in (signal.SIGINT, signal.SIGTERM, signal.SIGBREAK)}
+
+    def install_handler(sig, handler):
+        previous = handlers[sig]
+        handlers[sig] = handler
+        return previous
+
+    def confirmation_input():
+        assert handlers[signal.SIGINT] is signal.default_int_handler
+        if outcome == "eof":
+            raise EOFError
+        if outcome == "sigbreak":
+            handlers[signal.SIGBREAK](signal.SIGBREAK, None)
+        return "confirmed"
+
+    monkeypatch.setattr(signal, "signal", install_handler)
+    user_input = Mock(side_effect=confirmation_input)
+    ns.update(confirm_logger=Mock(), input=user_input)
+    if outcome == "pending_stop":
+        ns["_shutdown_signal_count"] = 1
+    try:
+        if outcome == "confirmed":
+            ns["_prompt_user_confirmation"]("eula", "privacy")
+        else:
+            with pytest.raises(EOFError if outcome == "eof" else KeyboardInterrupt):
+                ns["_prompt_user_confirmation"]("eula", "privacy")
+        if outcome == "pending_stop":
+            user_input.assert_not_called()
+        else:
+            user_input.assert_called_once()
+    finally:
+        assert all(handler is original for handler in handlers.values())
+
+
+@pytest.mark.skipif(os.name != "posix", reason="需要真实 POSIX 早期停止信号")
+def test_posix_worker_pending_stop_skips_confirmation(tmp_path):
+    (tmp_path / "EULA.md").write_text("fixture EULA", encoding="utf-8")
+    (tmp_path / "PRIVACY.md").write_text("fixture privacy", encoding="utf-8")
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-u",
+            "-m",
+            "pytests.startup_test.shutdown_fixture",
+            "--worker",
+            "--confirm",
+            "--early-stop",
+            "--self-stop",
+        ],
+        cwd=tmp_path,
+        env=os.environ | {"PYTHONPATH": str(ROOT), "PYTHONUTF8": "1", "EULA_AGREE": "", "PRIVACY_AGREE": ""},
+        input="",
+        capture_output=True,
+        text=True,
+        timeout=3,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "worker_booting" in result.stdout
+    assert "startup.agreement_confirm_prompt" not in result.stdout
+    assert "initialize" not in result.stdout
+
+
+@pytest.mark.skipif(os.name != "posix", reason="需要真实 POSIX 信号和独立进程组")
+@pytest.mark.parametrize("confirmed", [False, True])
+@pytest.mark.parametrize(
+    "runner_process,stop_signal", [(False, signal.SIGINT), (False, signal.SIGTERM), (True, signal.SIGTERM)]
+)
+def test_posix_worker_confirmation_signal_exit(tmp_path, confirmed, runner_process, stop_signal):
+    import queue
+    import threading
+
+    (tmp_path / "EULA.md").write_text("fixture EULA", encoding="utf-8")
+    (tmp_path / "PRIVACY.md").write_text("fixture privacy", encoding="utf-8")
+    args = [sys.executable, "-u", "-m", "pytests.startup_test.shutdown_fixture", "--confirm"]
+    if not runner_process:
+        args.append("--worker")
+    process = subprocess.Popen(
+        args,
+        cwd=tmp_path,
+        env=os.environ | {"PYTHONPATH": str(ROOT), "PYTHONUTF8": "1", "EULA_AGREE": "", "PRIVACY_AGREE": ""},
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        start_new_session=True,
+    )
+    lines = queue.Queue()
+    reader = threading.Thread(target=lambda: [lines.put(line) for line in process.stdout], daemon=True)
+    reader.start()
+    output = []
+
+    def wait_for_line(marker):
+        while True:
+            line = lines.get(timeout=5)
+            output.append(line)
+            if marker in line:
+                return
+
+    try:
+        wait_for_line("startup.agreement_confirm_prompt")
+        # 先让真实 input 消费一次输入；stdin 保持打开，下一轮继续阻塞等待。
+        process.stdin.write("retry\n")
+        process.stdin.flush()
+        wait_for_line("startup.agreement_confirm_retry")
+        worker_pid = int(next(line.split("=", 1)[1] for line in output if line.startswith("worker_pid=")))
+        if confirmed:
+            process.stdin.write("confirmed\n")
+            process.stdin.flush()
+            wait_for_line("worker_ready")
+        process.send_signal(stop_signal)
+        assert process.wait(timeout=3) == 0
+        reader.join(timeout=1)
+        while not lines.empty():
+            output.append(lines.get_nowait())
+        text = "".join(output)
+        if confirmed:
+            assert text.splitlines().count("memory_stop") == 1
+            assert "startup.shutdown_completed" in text
+            assert (tmp_path / "eula.confirmed").is_file()
+            assert (tmp_path / "privacy.confirmed").is_file()
+        else:
+            assert "initialize" not in text
+            assert "startup.shutdown_completed" not in text
+            assert not (tmp_path / "eula.confirmed").exists()
+            assert not (tmp_path / "privacy.confirmed").exists()
+        if runner_process:
+            assert "runner_exit=0" in text
+        with pytest.raises(ProcessLookupError):
+            os.kill(worker_pid, 0)
+    finally:
+        _cleanup_process_group(process)
+        reader.join(timeout=1)
+        process.stdin.close()
+        process.stdout.close()
+
+
 @pytest.mark.skipif(os.name != "posix", reason="需要真实 POSIX 信号；Windows terminate() 不是 SIGTERM")
 @pytest.mark.parametrize("fail", [False, True])
 @pytest.mark.parametrize("early", [False, True])
 def test_posix_real_runner_worker_shutdown(fail, early):
     args = [sys.executable, "-u", "-m", "pytests.startup_test.shutdown_fixture"] + (["--fail"] if fail else [])
     args += ["--early-stop"] if early else []
-    process = subprocess.Popen(args, cwd=ROOT, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+    process = subprocess.Popen(
+        args, cwd=ROOT, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, start_new_session=True
+    )
     import queue
     import threading
 
@@ -631,9 +791,9 @@ def test_posix_real_runner_worker_shutdown(fail, early):
         # 服务标记显式 flush；Worker 最后的普通 print 可能被 os._exit 丢弃，不能用作顺序证据。
         assert event_lines.index("memory_stop") < event_lines.index("runner_exit=" + str(1 if fail else 0))
     finally:
-        if process.poll() is None:
-            process.kill()
-            process.wait(timeout=5)
+        _cleanup_process_group(process)
+        reader.join(timeout=1)
+        process.stdout.close()
 
 
 @pytest.mark.parametrize(

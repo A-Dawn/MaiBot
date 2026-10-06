@@ -470,22 +470,40 @@ def _check_agreement_status(file_hash: str, confirm_file: Path, env_var: str) ->
     return False, True
 
 
-def _prompt_user_confirmation(eula_hash: str, privacy_hash: str) -> None:
-    """提示用户确认协议"""
-    confirm_logger.critical(t("startup.agreement_reconfirm"))
-    confirm_logger.critical(
-        t(
-            "startup.agreement_confirm_prompt",
-            eula_hash=eula_hash,
-            privacy_hash=privacy_hash,
-        )
-    )
+def _interrupt_agreement_confirmation(_signum: int, _frame: object) -> None:
+    """同步协议确认尚无事件循环，停止信号直接中断阻塞输入。"""
+    raise KeyboardInterrupt
 
-    while True:
-        user_input = input().strip().lower()
-        if user_input in ["同意", "confirmed"]:
-            return
-        confirm_logger.critical(t("startup.agreement_confirm_retry"))
+
+def _prompt_user_confirmation(eula_hash: str, privacy_hash: str) -> None:
+    """提示用户确认协议，并在离开交互阶段时恢复原信号处理。"""
+    handlers = {signal.SIGINT: signal.default_int_handler, signal.SIGTERM: _interrupt_agreement_confirmation}
+    if hasattr(signal, "SIGBREAK"):
+        handlers[signal.SIGBREAK] = _interrupt_agreement_confirmation
+    previous = {}
+    try:
+        for sig, handler in handlers.items():
+            previous[sig] = signal.signal(sig, handler)
+        # 导入期间已收到停止请求时，不能再进入 input 等待下一次信号。
+        if _shutdown_signal_count:
+            raise KeyboardInterrupt
+        confirm_logger.critical(t("startup.agreement_reconfirm"))
+        confirm_logger.critical(
+            t(
+                "startup.agreement_confirm_prompt",
+                eula_hash=eula_hash,
+                privacy_hash=privacy_hash,
+            )
+        )
+
+        while True:
+            user_input = input().strip().lower()
+            if user_input in ["同意", "confirmed"]:
+                return
+            confirm_logger.critical(t("startup.agreement_confirm_retry"))
+    finally:
+        for sig, handler in previous.items():
+            signal.signal(sig, handler)
 
 
 def _save_confirmations(eula_updated: bool, privacy_updated: bool, eula_hash: str, privacy_hash: str) -> None:

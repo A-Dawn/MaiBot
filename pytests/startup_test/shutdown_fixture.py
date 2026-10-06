@@ -103,7 +103,9 @@ def load_bot_functions(events, *, memory_failure=False, memory_delay=0, install_
     return namespace, system, tree
 
 
-def run_fixture_worker(fail=False, self_stop=False, restart=False, early_stop=False, shutdown_at=None, repeated=False):
+def run_fixture_worker(
+    fail=False, self_stop=False, restart=False, early_stop=False, shutdown_at=None, repeated=False, confirm=False
+):
     """供 POSIX 子进程测试使用；执行真实 Worker __main__，业务服务均为 fake。"""
 
     class Events(list):
@@ -191,10 +193,25 @@ def run_fixture_worker(fail=False, self_stop=False, restart=False, early_stop=Fa
     module = ModuleType("src.common.logger")
     module.initialize_ws_handler = lambda loop: None
     sys.modules[module.__name__] = module
+    if confirm:
+        import hashlib
+        import platform
+
+        ns["_install_early_worker_signal_handlers"]()
+        print(f"worker_pid={os.getpid()}", flush=True)
+        # 使用真实 raw_main/check_eula/input，仅替换业务系统和终端装饰输出。
+        ns.update(
+            hashlib=hashlib,
+            platform=platform,
+            confirm_logger=SimpleNamespace(critical=events.append),
+            MainSystem=lambda: system,
+            print_opensource_notice=lambda: None,
+            easter_egg=lambda: None,
+        )
     ns.update(
         {
             "__name__": "__main__",
-            "raw_main": lambda: system,
+            "raw_main": ns["raw_main"] if confirm else lambda: system,
             "os": os,
             "loop": None,
             "set_main_loop": lambda loop: None,
@@ -216,6 +233,7 @@ if __name__ == "__main__":
             "--early-stop" in sys.argv,
             next((arg.split("=", 1)[1] for arg in sys.argv if arg.startswith("--shutdown-at=")), None),
             "--repeated" in sys.argv,
+            "--confirm" in sys.argv,
         )
     else:
         from src.common.process_runner import supervise_worker
@@ -225,7 +243,8 @@ if __name__ == "__main__":
         code = supervise_worker(
             [sys.executable, "-m", "pytests.startup_test.shutdown_fixture", "--worker"]
             + (["--fail"] if "--fail" in sys.argv else [])
-            + (["--early-stop"] if "--early-stop" in sys.argv else []),
+            + (["--early-stop"] if "--early-stop" in sys.argv else [])
+            + (["--confirm"] if "--confirm" in sys.argv else []),
             os.environ.copy(),
             logging.getLogger("fixture"),
         )
