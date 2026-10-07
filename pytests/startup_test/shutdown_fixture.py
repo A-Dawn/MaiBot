@@ -199,12 +199,20 @@ def run_fixture_worker(
 
         ns["_install_early_worker_signal_handlers"]()
         print(f"worker_pid={os.getpid()}", flush=True)
+
+        class FixtureMainSystem:
+            """替身必须是类：bot.py 的 ``__main__`` 带有模块级注解 ``MainSystem | None``，
+            Python 3.12/3.13 会立即求值该注解，函数替身会在进入确认提示前抛出 TypeError。"""
+
+            def __new__(cls) -> SimpleNamespace:
+                return system
+
         # 使用真实 raw_main/check_eula/input，仅替换业务系统和终端装饰输出。
         ns.update(
             hashlib=hashlib,
             platform=platform,
             confirm_logger=SimpleNamespace(critical=events.append),
-            MainSystem=lambda: system,
+            MainSystem=FixtureMainSystem,
             print_opensource_notice=lambda: None,
             easter_egg=lambda: None,
         )
