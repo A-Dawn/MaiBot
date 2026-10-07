@@ -4,6 +4,7 @@ from datetime import datetime
 from io import BytesIO
 from typing import Any, Dict, Iterator, List, Optional, Tuple
 import base64
+import hashlib
 
 from PIL import Image as PILImage
 import pytest
@@ -23,9 +24,9 @@ EXIF_ORIENTATION_TAG = 0x0112
 
 @pytest.fixture(autouse=True)
 def clear_transcode_cache() -> Iterator[None]:
-    messages_module._transcode_first_frame_for_context.cache_clear()
+    messages_module._transcoded_image_cache.clear()
     yield
-    messages_module._transcode_first_frame_for_context.cache_clear()
+    messages_module._transcoded_image_cache.clear()
 
 
 def _build_mpo_bytes(*, orientation: Optional[int] = None) -> bytes:
@@ -120,16 +121,41 @@ def test_supported_image_format_is_passed_through_without_transcode(monkeypatch:
     assert image_parts[0].image_base64 == base64.b64encode(jpeg_bytes).decode("utf-8")
 
 
-def test_unsupported_image_is_transcoded_once_across_context_rebuilds() -> None:
-    component = ImageComponent(binary_hash="mpo", binary_data=_build_mpo_bytes())
+def test_unsupported_image_is_transcoded_once_across_context_rebuilds(monkeypatch: pytest.MonkeyPatch) -> None:
+    """规划器每轮重建上下文时，同一张图片只解码转码一次，缓存键是摘要而不是原始图片字节。"""
+
+    transcode_calls: List[bytes] = []
+    original_transcode = messages_module._transcode_first_frame_for_context
+
+    def counting_transcode(image_bytes: bytes) -> Tuple[str, str]:
+        transcode_calls.append(image_bytes)
+        return original_transcode(image_bytes)
+
+    monkeypatch.setattr(messages_module, "_transcode_first_frame_for_context", counting_transcode)
+    mpo_bytes = _build_mpo_bytes()
+    component = ImageComponent(binary_hash="mpo", binary_data=mpo_bytes)
 
     first_parts = _build_image_parts(component)
     second_parts = _build_image_parts(component)
 
     assert first_parts[0].image_base64 == second_parts[0].image_base64
-    cache_info = messages_module._transcode_first_frame_for_context.cache_info()
-    assert cache_info.misses == 1
-    assert cache_info.hits == 1
+    assert len(transcode_calls) == 1
+    assert list(messages_module._transcoded_image_cache) == [hashlib.sha256(mpo_bytes).hexdigest()]
+
+
+def test_transcode_cache_evicts_least_recently_used_entry() -> None:
+    """缓存条数不超过上限，超出时淘汰最久未使用的图片。"""
+
+    bmp_images = [
+        _encode_image("BMP", color=(index, 0, 0)) for index in range(messages_module.TRANSCODED_IMAGE_CACHE_SIZE + 1)
+    ]
+    for bmp_bytes in bmp_images:
+        _build_image_parts(ImageComponent(binary_hash="bmp", binary_data=bmp_bytes))
+
+    cache_keys = list(messages_module._transcoded_image_cache)
+    assert len(cache_keys) == messages_module.TRANSCODED_IMAGE_CACHE_SIZE
+    assert hashlib.sha256(bmp_images[0]).hexdigest() not in cache_keys
+    assert cache_keys[-1] == hashlib.sha256(bmp_images[-1]).hexdigest()
 
 
 def test_undecodable_unsupported_image_still_raises() -> None:

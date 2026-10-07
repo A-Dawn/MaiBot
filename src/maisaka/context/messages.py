@@ -4,10 +4,11 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
-from functools import lru_cache
 from io import BytesIO
-from typing import Any, Optional, Sequence, Tuple
+from typing import Any, Dict, Optional, Sequence, Tuple
 import base64
+import hashlib
+import threading
 import uuid
 
 from PIL import Image as PILImage, ImageOps
@@ -49,6 +50,10 @@ FOCUS_AT_WAKEUP_SOURCE = "focus_at_wakeup"
 FOCUS_WAKEUP_SOURCE_KINDS = frozenset({FOCUS_COOLDOWN_WAKEUP_SOURCE, FOCUS_AT_WAKEUP_SOURCE})
 # 不受支持格式图片的转码结果缓存条数；规划器每轮都会重建上下文，缓存可避免同一张图片被反复解码转码。
 TRANSCODED_IMAGE_CACHE_SIZE = 16
+# 以图片字节的 SHA-256 摘要为键缓存转码结果，缓存键不长期持有原始图片字节；字典按插入顺序充当 LRU。
+# 上下文也可能在 asyncio.to_thread 的工作线程中构建，读写需加锁。
+_transcoded_image_cache: Dict[str, Tuple[str, str]] = {}
+_transcoded_image_cache_lock = threading.Lock()
 
 
 def _guess_image_format(image_bytes: bytes) -> Optional[str]:
@@ -62,13 +67,12 @@ def _guess_image_format(image_bytes: bytes) -> Optional[str]:
         return None
 
 
-@lru_cache(maxsize=TRANSCODED_IMAGE_CACHE_SIZE)
 def _transcode_first_frame_for_context(image_bytes: bytes) -> Tuple[str, str]:
     """将图片首帧转码为上下文图片片段可接受的格式，返回 `(image_format, image_base64)`。
 
     首帧不含透明信息时编码为 JPEG（quality=95，与 `compress_messages` 一致）：MPO 本身就是 JPEG 容器，
     照片若转码为 PNG 会耗时数秒阻塞事件循环且体积膨胀数倍；仅含透明信息的首帧编码为 PNG 以保留透明度。
-    按图片字节内容缓存结果；无法解码的图片会直接抛出异常，不做静默跳过。
+    结果由调用方按图片摘要缓存；无法解码的图片会直接抛出异常，不做静默跳过。
     """
     with PILImage.open(BytesIO(image_bytes)) as image:
         # 多帧图片（如手机相机拍摄的 MPO）只取首帧主图。
@@ -94,11 +98,27 @@ def _transcode_first_frame_for_context(image_bytes: bytes) -> Tuple[str, str]:
 def _encode_image_for_context(image_bytes: bytes, image_format: str) -> Tuple[str, str]:
     """将图片编码为上下文图片片段可接受的 `(image_format, image_base64)`。
 
-    受支持的格式直接透传原始字节，不做解码；MPO、BMP、TIFF 等其余格式取首帧转码为 JPEG（含透明信息时为 PNG）。
+    受支持的格式直接透传原始字节，不做解码；MPO、BMP、TIFF 等其余格式取首帧转码为 JPEG（含透明信息时为 PNG），
+    转码结果按图片摘要放入容量为 `TRANSCODED_IMAGE_CACHE_SIZE` 的 LRU 缓存，同一张图片只解码一次。
     """
     if image_format in SUPPORTED_IMAGE_FORMATS:
         return image_format, base64.b64encode(image_bytes).decode("utf-8")
-    return _transcode_first_frame_for_context(image_bytes)
+
+    image_digest = hashlib.sha256(image_bytes).hexdigest()
+    with _transcoded_image_cache_lock:
+        cached_result = _transcoded_image_cache.pop(image_digest, None)
+        if cached_result is not None:
+            # 重新插入到末尾，标记为最近使用。
+            _transcoded_image_cache[image_digest] = cached_result
+            return cached_result
+
+    transcoded_result = _transcode_first_frame_for_context(image_bytes)
+    with _transcoded_image_cache_lock:
+        _transcoded_image_cache[image_digest] = transcoded_result
+        while len(_transcoded_image_cache) > TRANSCODED_IMAGE_CACHE_SIZE:
+            # 字典按插入顺序迭代，第一个键即最久未使用的条目。
+            _transcoded_image_cache.pop(next(iter(_transcoded_image_cache)))
+    return transcoded_result
 
 
 def _append_emoji_component(
