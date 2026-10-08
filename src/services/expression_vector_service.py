@@ -25,20 +25,26 @@ class ExpressionVectorService:
         for name in task.model_list:
             model = models[name]
             provider = providers[model.api_provider]
-            candidates.append({
-                "name": name,
-                "identifier": model.model_identifier,
-                "provider": model.api_provider,
-                "base_url": provider.base_url.rstrip("/"),
-                "client_type": provider.client_type,
-                "extra_params": model.extra_params,
-            })
-        return json.dumps({
-            "task": task.model_dump(),
-            "models": candidates,
-            "mode": global_config.expression.expression_selection_mode,
-            "path": global_config.expression.expression_vector_index_path,
-        }, ensure_ascii=False, sort_keys=True)
+            candidates.append(
+                {
+                    "name": name,
+                    "identifier": model.model_identifier,
+                    "provider": model.api_provider,
+                    "base_url": provider.base_url.rstrip("/"),
+                    "client_type": provider.client_type,
+                    "extra_params": model.extra_params,
+                }
+            )
+        return json.dumps(
+            {
+                "task": task.model_dump(),
+                "models": candidates,
+                "use_vector_expression": global_config.expression.use_vector_expression,
+                "path": global_config.expression.expression_vector_index_path,
+            },
+            ensure_ascii=False,
+            sort_keys=True,
+        )
 
     def start(self) -> None:
         if self._registered:
@@ -91,8 +97,9 @@ class ExpressionVectorService:
     async def _delete_vector_space(self, space_id: str) -> Dict[str, Any]:
         config = global_config.expression
         return await expression_vector_index.delete_vector_space(
-            index_path=config.expression_vector_index_path, space_id=space_id,
-            enabled=config.expression_selection_mode == "vector_intent",
+            index_path=config.expression_vector_index_path,
+            space_id=space_id,
+            enabled=config.use_vector_expression,
         )
 
 

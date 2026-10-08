@@ -7,8 +7,14 @@ import json
 
 
 def build_embedding_fingerprint(
-    *, model: str, provider: str, model_identifier: str, base_url: str,
-    dimension: int, dimension_request_mode: str, extra_params: Dict[str, Any],
+    *,
+    model: str,
+    provider: str,
+    model_identifier: str,
+    base_url: str,
+    dimension: int,
+    dimension_request_mode: str,
+    extra_params: Dict[str, Any],
 ) -> Dict[str, Any]:
     """按实际模型、服务地址、有效维度及语义参数生成稳定指纹。"""
     semantic_params = dict(extra_params)
