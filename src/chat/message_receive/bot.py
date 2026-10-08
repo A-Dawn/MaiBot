@@ -506,7 +506,7 @@ class ChatBot:
         had_runtime = await heartflow_manager.clear_chat_history_context(message.session_id)
 
         sent = await text_to_stream(
-            "已清空当前聊天的 Maisaka 历史上下文。",
+            "麦麦已暂时失忆",
             message.session_id,
             storage_message=False,
         )

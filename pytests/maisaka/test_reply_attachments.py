@@ -66,7 +66,7 @@ def test_reply_tools_follow_independent_switches(reply_context, monkeypatch, ena
 
 
 @pytest.mark.asyncio
-async def test_reply_sends_selected_picture_and_at_together(reply_context, monkeypatch):
+async def test_reply_sends_selected_picture_separately_from_at_text(reply_context, monkeypatch):
     generator = SimpleNamespace(generate_reply_with_context=AsyncMock(return_value=(
         True, ReplyGenerationResult(success=True, completion=LLMCompletionResult(response_text="看这张图")),
     )))
@@ -81,9 +81,13 @@ async def test_reply_sends_selected_picture_and_at_together(reply_context, monke
     result = await reply_tool.handle_tool(reply_context, ToolInvocation("reply", arguments=arguments))
 
     assert result.success
-    components = sender.call_args.kwargs["message_sequence"].components
+    assert sender.await_count == 2
+    components = sender.await_args_list[0].kwargs["message_sequence"].components
     assert isinstance(components[0], AtComponent) and components[0].target_user_id == "user-1"
-    assert isinstance(components[-1], ImageComponent) and components[-1].binary_data == b"second"
+    assert not any(isinstance(component, ImageComponent) for component in components)
+    image_components = sender.await_args_list[1].kwargs["message_sequence"].components
+    assert len(image_components) == 1
+    assert isinstance(image_components[0], ImageComponent) and image_components[0].binary_data == b"second"
     assert generator.generate_reply_with_context.call_args.kwargs["reply_tool_args"] == {
         "attach_at": ["msg-1"], "attach_pic": [{"msg_id": "msg-1", "index": 1}],
     }
@@ -97,9 +101,11 @@ async def test_reply_keeps_async_split_and_quote_metadata_with_picture(reply_con
         "今天见", {"attach_pic": [{"msg_id": "msg-1", "index": 0}]},
     )
     splitter.assert_awaited_once()
-    assert [item.quote_previous for item in items] == [False, True]
+    assert [item.quote_previous for item in items] == [False, True, False]
     assert len(items[0].sequence.components) == 1
-    assert items[1].sequence.components[-1].binary_data == b"first"
+    assert all(isinstance(component, TextComponent) for component in items[1].sequence.components)
+    assert len(items[2].sequence.components) == 1
+    assert items[2].sequence.components[0].binary_data == b"first"
 
 
 @pytest.mark.asyncio
@@ -115,7 +121,10 @@ async def test_picture_from_tool_media_history(reply_context):
         "找到图片了", {"attach_pic": [{"media_index": "tool_result:call_x:1", "index": 0}]},
         skip_post_process=True,
     )
-    assert items[0].sequence.components[-1].binary_data == b"tool-result"
+    assert len(items) == 2
+    assert isinstance(items[0].sequence.components[0], TextComponent)
+    assert len(items[1].sequence.components) == 1
+    assert items[1].sequence.components[0].binary_data == b"tool-result"
 
 
 @pytest.mark.asyncio
