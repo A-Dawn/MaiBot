@@ -35,8 +35,12 @@ def _historical_fact_batch(cursor: str, limit: int) -> Tuple[List[Dict[str, Any]
               AND (p.is_deleted IS NULL OR p.is_deleted = 0)
               AND e.evidence_id = (
                   SELECT MIN(e2.evidence_id) FROM fact_evidence e2
+                  JOIN paragraphs p2 ON p2.hash = e2.evidence_id
                   WHERE e2.claim_id = c.claim_id AND e2.evidence_type = 'paragraph'
                     AND e2.stance = 'support'
+                    AND (p2.is_deleted IS NULL OR p2.is_deleted = 0)
+                    AND json_valid(p2.metadata)
+                    AND json_extract(p2.metadata, '$.evidence_source') = 'user_supported'
               )
             ORDER BY c.claim_id ASC LIMIT ?
             """,
