@@ -2111,15 +2111,16 @@
 }
 
 /* 防滑纹是浮在标题条右上角的，给标题让出它的宽度，长标题才不会叠上去。
-   监控推理卡片使用无装饰的紧凑布局，不绘制防滑纹，避免与右侧来源标签重叠。 */
+   监控推理卡片使用无装饰的紧凑布局，不绘制防滑纹，避免与右侧来源标签重叠。
+   插件市场有最近活动标签时由标签替代防滑纹，也不再为纹样预留空间。 */
 :root[data-dashboard-style='millennium']
-  [data-dashboard-card='true']:not([data-maisaka-trace-card='true'])
+  [data-dashboard-card='true']:not([data-maisaka-trace-card='true']):not([data-plugin-recent-activity='true'])
   > [data-dashboard-card-header='true']:not(:has(button, input, [role='tablist'], [role='combobox'])) {
   padding-right: calc(0.875rem + 34px + 0.75rem);
 }
 
 :root[data-dashboard-style='millennium']
-  [data-dashboard-card='true']:not([data-maisaka-trace-card='true'])
+  [data-dashboard-card='true']:not([data-maisaka-trace-card='true']):not([data-plugin-recent-activity='true'])
   > [data-dashboard-card-header='true']:not(:has(button, input, [role='tablist'], [role='combobox']))::after {
   background: repeating-linear-gradient(90deg, var(--mil-vent) 0 2px, transparent 2px 6px);
   content: '';

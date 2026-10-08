@@ -20,6 +20,9 @@ const LAUNCH_BOOST_FULL_HOURS = 24
 const LAUNCH_BOOST_DECAY_HOURS = 48
 const UPDATE_BOOST_WEIGHT = 3
 const UPDATE_BOOST_WINDOW_DAYS = 14
+const GROWTH_BOOST_RANK_LIMIT = 8
+const GROWTH_BOOST_WEIGHT_7D = 1
+const GROWTH_BOOST_WEIGHT_30D = 0.6
 const MS_PER_DAY = 24 * 60 * 60 * 1000
 const MS_PER_HOUR = 60 * 60 * 1000
 
@@ -186,6 +189,24 @@ function normalizeScore(value: number, maxValue: number, weight: number): number
   return (value / maxValue) * weight
 }
 
+function getGrowthBoost(stats: PluginStatsData | undefined): number {
+  if (!stats) return 0
+
+  const rankings = [
+    { rank: stats.downloads_growth_rank_7d, weight: GROWTH_BOOST_WEIGHT_7D },
+    { rank: stats.likes_growth_rank_7d, weight: GROWTH_BOOST_WEIGHT_7D },
+    { rank: stats.downloads_growth_rank_30d, weight: GROWTH_BOOST_WEIGHT_30D },
+    { rank: stats.likes_growth_rank_30d, weight: GROWTH_BOOST_WEIGHT_30D },
+  ]
+  // 仅为前八名小幅加权，取最强的一项，避免多个榜单的加成叠加。
+  return rankings.reduce((boost, { rank, weight }) => {
+    if (rank == null || !Number.isInteger(rank) || rank < 1 || rank > GROWTH_BOOST_RANK_LIMIT) {
+      return boost
+    }
+    return Math.max(boost, ((GROWTH_BOOST_RANK_LIMIT + 1 - rank) / GROWTH_BOOST_RANK_LIMIT) * weight)
+  }, 0)
+}
+
 function getStableRandomRank(seed: string, plugin: PluginInfo): number {
   const value = `${seed}:${getPluginIdentity(plugin)}`
   let hash = 2166136261
@@ -281,6 +302,7 @@ export function MarketplaceTab({
         normalizeScore(ratingScore, scoreBasis.maxRatingScore, 2) +
         getLaunchBoost(plugin, now) +
         getUpdateBoost(plugin, now) +
+        getGrowthBoost(stats) +
         getFreshnessBoost(plugin, scoreBasis.maxMarketplaceOrder, now)
       )
     }
