@@ -737,12 +737,12 @@ class ExpressionVectorIndex:
         remaining = [item for item in profiles if item["marker"] != space_id]
         vectors_path = _resolve_vectors_path(index_path, payload)
         if not remaining:
-            index_path.unlink()
             if vectors_path.parent == index_path.parent and (
                 vectors_path.name == f"{index_path.stem}.npz"
                 or vectors_path.name.startswith(f"{index_path.stem}.vectors-")
             ):
-                vectors_path.unlink()
+                vectors_path.unlink(missing_ok=True)
+            index_path.unlink()
         else:
             # 保留其余模型分组的数组和索引位置，只移除目标分组。
             with np.load(vectors_path) as arrays:
