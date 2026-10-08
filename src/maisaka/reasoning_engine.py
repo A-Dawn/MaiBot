@@ -782,10 +782,8 @@ class MaisakaReasoningEngine:
                 log_prefix=self._runtime.log_prefix,
             )
         logger.info(
-            f"{self._runtime.log_prefix} 开始思考: "
-            f"第 {round_index + 1} 轮"
-            f"消息数={len(self._runtime._chat_history)} "
-            f"开始时间={planner_started_at:.3f}"
+            f"{self._runtime.log_prefix} 开始思考 "
+            f"轮次={round_index + 1} 历史消息={len(self._runtime._chat_history)}"
         )
         state.current_stage_started_at = planner_started_at
         state.action_tool_count = len(action_tool_definitions)

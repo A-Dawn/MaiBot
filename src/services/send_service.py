@@ -920,10 +920,26 @@ async def _send_via_platform_io(
         )
         if should_log_delivery:
             successful_driver_ids = [receipt.driver_id or "unknown" for receipt in delivery_batch.sent_receipts]
+            logger.debug(
+                f"投递成功 平台={route_key.platform} 驱动={', '.join(successful_driver_ids)}"
+            )
+            # 网关驱动 ID 形如 gateway:插件ID:网关名，INFO 只展示网关名。
+            driver_names = ",".join(
+                driver_id.rsplit(":", 1)[-1] if driver_id.startswith("gateway:") else driver_id
+                for driver_id in successful_driver_ids
+            )
+            group_info = message.message_info.group_info
+            user_info = message.message_info.user_info
+            session_name = _chat_manager.get_session_name(message.session_id)
+            if not session_name:
+                session_name = (
+                    group_info.group_name or group_info.group_id
+                    if group_info is not None
+                    else f"{user_info.user_nickname or user_info.user_id}的私聊"
+                )
             logger.info(
-                f"已通过 Platform IO 将消息发往平台 '{route_key.platform}' "
-                f"(drivers: {', '.join(successful_driver_ids)}) "
-                f"message={_build_outbound_log_preview(message)}"
+                f"[{route_key.account_id or ''}:{route_key.platform}:{driver_names}] "
+                f"[{session_name}] {global_config.bot.nickname}: {_build_outbound_log_preview(message)}"
             )
         return message
 

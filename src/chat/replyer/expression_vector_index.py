@@ -2488,7 +2488,7 @@ class ExpressionVectorIndex:
                 isolated_count=isolated_count,
                 failed_expression_ids=failed_expression_ids,
             )
-            logger.info(
+            logger.debug(
                 f"表达向量索引批量同步完成: path={resolved_index_path} "
                 f"requested={requested_count} succeeded={len(normalized_items)} "
                 f"failed={len(embedding_failures)} total_count={len(raw_expressions)} "

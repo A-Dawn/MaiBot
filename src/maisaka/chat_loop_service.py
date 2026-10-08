@@ -740,12 +740,9 @@ class MaisakaChatLoopService:
             prompt_cache_hit_tokens / prompt_cache_total_tokens * 100 if prompt_cache_total_tokens > 0 else 0
         )
         logger.info(
-            "Planner缓存："
-            f"{request_kind}, "
-            f"命中={prompt_cache_hit_tokens}, "
-            f"miss_tokens={prompt_cache_miss_tokens}, "
-            f"hit_rate={prompt_cache_hit_rate:.2f}%, "
-            f"prompt_tokens={prompt_tokens}"
+            f"Planner缓存 [{request_kind}] 输入={prompt_tokens} "
+            f"命中={prompt_cache_hit_tokens} 未命中={prompt_cache_miss_tokens} "
+            f"命中率={prompt_cache_hit_rate:.2f}%"
         )
 
     async def ensure_chat_prompt_loaded(self, tools_section: str = "") -> None:

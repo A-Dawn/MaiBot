@@ -1437,11 +1437,9 @@ class BaseMaisakaReplyGenerator(RetroReplyPromptMixin):
         if hook_rewrite_events:
             result.metrics.extra["replyer_hook_rewrite_events"] = list(hook_rewrite_events)
         logger.info(
-            "Replyer缓存："
-            f"命中={prompt_cache_hit_tokens}, "
-            f"未命中={prompt_cache_miss_tokens}, "
-            f"命中率={prompt_cache_hit_rate:.2f}%, "
-            f"token使用={generation_result.prompt_tokens}"
+            f"Replyer缓存 输入={generation_result.prompt_tokens} "
+            f"命中={prompt_cache_hit_tokens} 未命中={prompt_cache_miss_tokens} "
+            f"命中率={prompt_cache_hit_rate:.2f}%"
         )
 
         if not result.success:
@@ -1450,9 +1448,8 @@ class BaseMaisakaReplyGenerator(RetroReplyPromptMixin):
             return finalize(False)
 
         logger.info(
-            f"Maisaka 回复器生成成功 文本={response_text!r} "
-            f"总耗时ms={result.metrics.overall_ms} 重生成次数={retry_count} "
-            f"推理续写次数={reasoning_continuation_count} "
+            f"回复生成完成 耗时={result.metrics.overall_ms / 1000:.2f}s "
+            f"重生成={retry_count} 续写={reasoning_continuation_count} "
             f"已选表达={result.selected_expression_ids!r}"
         )
         if retry_count > 0:

@@ -264,7 +264,7 @@ class ChatManager:
         try:
             for session in self.sessions.values():
                 self._save_session(session)
-            logger.info(f"共 {len(self.sessions)} 个会话已经保存到数据库中")
+            logger.debug(f"共 {len(self.sessions)} 个会话已经保存到数据库中")
         except Exception as e:
             logger.error(f"保存会话记录到数据库时发生错误: {e}")
             raise e
