@@ -46,6 +46,7 @@ from src.llm_models.model_client.base_client import (
     client_registry,
 )
 from src.llm_models.generation_diagnostics import sanitize_diagnostic_url
+from src.llm_models.image_normalizer import normalize_context_images
 from src.llm_models.request_snapshot import (
     attach_request_snapshot,
     format_request_snapshot_log_info,
@@ -1351,6 +1352,9 @@ class LLMOrchestrator:
                 else:
                     context_items = context_result
             try:
+                if request_type == RequestType.RESPONSE and context_items:
+                    # 图片解码、缩放及切图在线程池执行，避免阻塞 Bot 或 WebUI 事件循环。
+                    context_items = await asyncio.to_thread(normalize_context_images, context_items)
                 request = self._build_client_request(
                     request_type=request_type,
                     model_info=model_info,
