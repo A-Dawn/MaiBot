@@ -178,15 +178,15 @@ class PersonFactWritebackService:
             fact = str(item.get("fact", "") if isinstance(item, dict) else item).strip()
             if not fact:
                 continue
-            message_id = str(item.get("evidence_message_id", "") if isinstance(item, dict) else "").strip()
-            # 提取模型已经结合目标人物的发言完成语义判断，消息 ID 只用于保留来源。
+            # 语义判断由提取模型完成，来源 ID 由本次实际输入的消息确定。
+            # 记录完整的提取上下文，不把模型生成的消息 ID 写成真实证据。
             await store_person_memory_from_answer(
                 person_name,
                 fact,
                 session_id,
                 person_id=str(getattr(target_person, "person_id", "") or "").strip(),
                 evidence_source="user_supported",
-                evidence_message_ids=[message_id] if message_id else evidence_message_ids,
+                evidence_message_ids=evidence_message_ids,
                 fact_claim={"authority": "direct_user", "stability": "stable", "profile_section": "stable_facts"},
             )
 
