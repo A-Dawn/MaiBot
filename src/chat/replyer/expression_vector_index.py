@@ -4,7 +4,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from hashlib import sha256
 from pathlib import Path
-from typing import Any, Dict, List, Sequence, Tuple
+from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
 import asyncio
 import copy
@@ -450,7 +450,9 @@ def _remove_embedding_failures_file(index_path: Path) -> None:
         )
 
 
-def _atomic_write_text(path: Path, content: str) -> None:
+def _atomic_write_text(
+    path: Path, content: str, *, publish: Optional[Callable[[Path, Path], bool]] = None,
+) -> bool:
     """用同目录唯一临时文件完整落盘后原子替换文本文件。"""
 
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -460,7 +462,10 @@ def _atomic_write_text(path: Path, content: str) -> None:
             temporary_file.write(content)
             temporary_file.flush()
             os.fsync(temporary_file.fileno())
+        if publish is not None:
+            return publish(temporary_path, path)
         temporary_path.replace(path)
+        return True
     finally:
         temporary_path.unlink(missing_ok=True)
 
@@ -603,11 +608,13 @@ class ExpressionVectorIndex:
         self._history_backfill_wakeup = asyncio.Event()
         self._history_backfill_index_path: str | None = None
         self._profile_generation = 0
+        self._publication_lock = threading.Lock()
         self._history_backfill_error = ""
 
     def request_history_backfill(self, *, index_path: str, enabled: bool = True) -> None:
         """配置变化后立即刷新标定，唤醒补建任务并跳过旧配置的扫描冷却。"""
-        self._profile_generation += 1
+        with self._publication_lock:
+            self._profile_generation += 1
         self._profile_cache = None
         self._reset_profile_drift_candidate()
         self._history_backfill_last_empty_at = 0.0
@@ -624,6 +631,14 @@ class ExpressionVectorIndex:
         if task is not None and not task.done():
             task.cancel()
             await asyncio.gather(task, return_exceptions=True)
+
+    def _publish_current_manifest(self, temporary_path: Path, path: Path, generation: int) -> bool:
+        """让配置版本递增与清单切换互斥；批量读写始终在锁外完成。"""
+        with self._publication_lock:
+            if generation != self._profile_generation:
+                return False
+            temporary_path.replace(path)
+            return True
 
     @staticmethod
     def _space_profiles(payload: Dict[str, Any]) -> List[Dict[str, Any]]:
@@ -2151,7 +2166,8 @@ class ExpressionVectorIndex:
         payload: dict[str, Any],
         profile_vectors: Dict[str, np.ndarray],
         profile_cluster_centers: Dict[str, np.ndarray],
-    ) -> Path:
+        publish: Optional[Callable[[Path, Path], bool]] = None,
+    ) -> Optional[Path]:
         """先提交版本化 NPZ，再原子切换 JSON 清单。"""
 
         index_path.parent.mkdir(parents=True, exist_ok=True)
@@ -2186,8 +2202,11 @@ class ExpressionVectorIndex:
                 os.fsync(temporary_vectors_file.fileno())
             temporary_vectors_path.replace(next_vectors_path)
             payload["vectors_file"] = next_vectors_path.name
-            _atomic_write_text(index_path, json.dumps(payload, ensure_ascii=False, indent=2))
-            committed = True
+            committed = _atomic_write_text(
+                index_path, json.dumps(payload, ensure_ascii=False, indent=2), publish=publish,
+            )
+            if not committed:
+                return None
         finally:
             temporary_vectors_path.unlink(missing_ok=True)
             if not committed:
@@ -2504,11 +2523,14 @@ class ExpressionVectorIndex:
             if not normalized_items and not force_recluster:
                 if index_state.existing_payload:
                     payload["updated_at"] = datetime.now().isoformat(timespec="seconds")
-                    await asyncio.to_thread(
+                    published = await asyncio.to_thread(
                         _atomic_write_text,
                         resolved_index_path,
                         json.dumps(payload, ensure_ascii=False, indent=2),
+                        publish=lambda temporary, path: self._publish_current_manifest(temporary, path, profile_generation),
                     )
+                    if not published:
+                        return None
                     await asyncio.to_thread(
                         _remove_embedding_failures_file,
                         resolved_index_path,
@@ -2520,11 +2542,14 @@ class ExpressionVectorIndex:
                         "updated_at": datetime.now().isoformat(timespec="seconds"),
                         "embedding_failures": payload["embedding_failures"],
                     }
-                    await asyncio.to_thread(
+                    published = await asyncio.to_thread(
                         _atomic_write_text,
                         _resolve_embedding_failures_path(resolved_index_path),
                         json.dumps(standalone_payload, ensure_ascii=False, indent=2),
+                        publish=lambda temporary, path: self._publish_current_manifest(temporary, path, profile_generation),
                     )
+                    if not published:
+                        return None
                 return ExpressionVectorIndexUpdateResult(
                     batch_count=0,
                     total_count=len(raw_expressions),
@@ -2561,11 +2586,14 @@ class ExpressionVectorIndex:
             if not normalized_items and not raw_expressions:
                 if index_state.existing_payload:
                     payload["updated_at"] = datetime.now().isoformat(timespec="seconds")
-                    await asyncio.to_thread(
+                    published = await asyncio.to_thread(
                         _atomic_write_text,
                         resolved_index_path,
                         json.dumps(payload, ensure_ascii=False, indent=2),
+                        publish=lambda temporary, path: self._publish_current_manifest(temporary, path, profile_generation),
                     )
+                    if not published:
+                        return None
                     await asyncio.to_thread(
                         _remove_embedding_failures_file,
                         resolved_index_path,
@@ -2577,11 +2605,14 @@ class ExpressionVectorIndex:
                         "updated_at": datetime.now().isoformat(timespec="seconds"),
                         "embedding_failures": payload["embedding_failures"],
                     }
-                    await asyncio.to_thread(
+                    published = await asyncio.to_thread(
                         _atomic_write_text,
                         _resolve_embedding_failures_path(resolved_index_path),
                         json.dumps(standalone_payload, ensure_ascii=False, indent=2),
+                        publish=lambda temporary, path: self._publish_current_manifest(temporary, path, profile_generation),
                     )
+                    if not published:
+                        return None
                 return ExpressionVectorIndexUpdateResult(
                     batch_count=0,
                     total_count=0,
@@ -2704,14 +2735,19 @@ class ExpressionVectorIndex:
                 cluster_maintenance["stabilized_at"] = previous_stabilized_at or now_text
             payload["cluster_maintenance"] = cluster_maintenance
 
-            await asyncio.to_thread(
+            if profile_generation != self._profile_generation:
+                return None
+            published_path = await asyncio.to_thread(
                 self._write_index_files,
                 index_path=resolved_index_path,
                 vectors_path=vectors_path,
                 payload=payload,
                 profile_vectors=profile_vectors,
                 profile_cluster_centers=profile_cluster_centers,
+                publish=lambda temporary, path: self._publish_current_manifest(temporary, path, profile_generation),
             )
+            if published_path is None:
+                return None
             await asyncio.to_thread(
                 _remove_embedding_failures_file,
                 resolved_index_path,
@@ -2753,6 +2789,7 @@ class ExpressionVectorIndex:
                 新的待回填项，则返回 False，由回填循环继续处理。
         """
 
+        profile_generation = self._profile_generation
         async with self._update_lock:
             selection = await asyncio.to_thread(
                 self._load_history_backfill_items,
@@ -2849,14 +2886,19 @@ class ExpressionVectorIndex:
                 "last_recluster_sample_count": len(raw_expressions),
                 "stabilized_at": now_text,
             }
-            await asyncio.to_thread(
+            if profile_generation != self._profile_generation:
+                return False
+            published_path = await asyncio.to_thread(
                 self._write_index_files,
                 index_path=index_path,
                 vectors_path=index_state.vectors_path,
                 payload=payload,
                 profile_vectors=profile_vectors,
                 profile_cluster_centers=profile_cluster_centers,
+                publish=lambda temporary, path: self._publish_current_manifest(temporary, path, profile_generation),
             )
+            if published_path is None:
+                return False
             await asyncio.to_thread(_remove_embedding_failures_file, index_path)
             self._snapshot = None
             logger.info(
@@ -2921,7 +2963,7 @@ class ExpressionVectorIndex:
             from src.config.config import global_config
 
             # 旧配置的在途请求失败时，仍立即处理已经收到的新配置通知。
-            if global_config.expression.expression_selection_mode == "vector_intent":
+            if global_config.expression.use_vector_expression:
                 self._history_backfill_last_empty_at = 0.0
                 self._history_backfill_last_failure_at = 0.0
                 self.ensure_history_backfill_task(index_path=self._history_backfill_index_path, force=True)
@@ -2962,12 +3004,15 @@ class ExpressionVectorIndex:
 
             batch_started_at = time.monotonic()
             current_profile = await self.get_current_embedding_profile(index_path=str(resolved_index_path))
+            profile_generation = self._profile_generation
             selection = await asyncio.to_thread(
                 self._load_history_backfill_items,
                 index_path=resolved_index_path,
                 profile=current_profile,
                 batch_size=effective_batch_size,
             )
+            if profile_generation != self._profile_generation:
+                continue
             pending_items = selection.items
             if not pending_items:
                 finalized = await self._finalize_bootstrap_if_ready(

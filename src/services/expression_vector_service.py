@@ -53,7 +53,7 @@ class ExpressionVectorService:
         config = global_config.expression
         expression_vector_index.request_history_backfill(
             index_path=config.expression_vector_index_path,
-            enabled=config.expression_selection_mode == "vector_intent",
+            enabled=config.use_vector_expression,
         )
 
     async def on_config_reload(self, changed_scopes: Sequence[str] = ()) -> None:
@@ -82,7 +82,7 @@ class ExpressionVectorService:
         config = global_config.expression
         return await expression_vector_index.list_vector_spaces(
             index_path=config.expression_vector_index_path,
-            enabled=config.expression_selection_mode == "vector_intent",
+            enabled=config.use_vector_expression,
         )
 
     async def delete_vector_space(self, space_id: str) -> Dict[str, Any]:
