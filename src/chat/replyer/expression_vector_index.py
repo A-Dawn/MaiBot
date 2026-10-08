@@ -380,7 +380,7 @@ def _deserialize_embedding_profile(raw_profile: dict[str, Any]) -> ExpressionEmb
     )
     if stored_marker != expected_marker:
         raise ValueError(
-            f"embedding profile 持久化 marker 不一致: stored={stored_marker[:12]}, actual={profile.marker[:12]}"
+            f"embedding profile 持久化 marker 不一致: stored={stored_marker[:12]}, actual={expected_marker[:12]}"
         )
     if version == 2:
         # 保留旧索引的分组标记；首次新标定会识别出缺失的模型身份并进行补建。
