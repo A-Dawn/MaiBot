@@ -413,6 +413,11 @@ async function selectConfigPage(user: ReturnType<typeof userEvent.setup>, name: 
   await user.click(screen.getByRole('menuitem', { name }))
 }
 
+/** 栏目下拉菜单中的页面入口；每行另有一个仅含图标的「钉固 / 取消钉固」menuitem，不计入 */
+function getConfigPageMenuItems(menu: HTMLElement) {
+  return within(menu).getAllByRole('menuitem', { name: (name) => !/^(取消)?钉固/.test(name) })
+}
+
 describe('BotConfigPage 特征化', () => {
   it('初始加载配置并展示详细设置', async () => {
     await renderBotPage()
@@ -588,11 +593,11 @@ describe('BotConfigPage 特征化', () => {
       expect(screen.getByTestId('form-personality-sections')).toHaveTextContent('personality')
       expect(screen.getByTestId('form-personality-values')).toHaveTextContent('原始人格')
       const menu = await openConfigMenu(user)
-      expect(
-        within(menu)
-          .getAllByRole('menuitem')
-          .map((item) => item.textContent)
-      ).toEqual(['人格', '机器人', '实验性'])
+      expect(getConfigPageMenuItems(menu).map((item) => item.textContent)).toEqual([
+        '人格',
+        '机器人',
+        '实验性',
+      ])
       await user.click(within(menu).getByRole('menuitem', { name: '机器人' }))
       expect(await screen.findByTestId('form-bot-sections')).toHaveTextContent('bot,sub_feature')
     })
@@ -656,7 +661,7 @@ describe('BotConfigPage 特征化', () => {
       await renderBotPage()
       expect(screen.queryByText(/展开隐藏配置栏目/)).not.toBeInTheDocument()
       const menu = await openConfigMenu(user)
-      expect(within(menu).getAllByRole('menuitem')).toHaveLength(3)
+      expect(getConfigPageMenuItems(menu)).toHaveLength(3)
     })
   })
 
@@ -1168,7 +1173,7 @@ describe('BotConfigPage 特征化', () => {
       expect(screen.getByTestId('form-experimental')).toBeInTheDocument()
     })
 
-    it('uiUseSubTabs 按根字段/子类/高级子页拆分，聊天子页不再显示回复风格', async () => {
+    it('uiUseSubTabs 按根字段/子类/高级子页拆分，回复风格以聊天流prompt子页默认显示', async () => {
       const config = {
         ...baseConfig(),
         chat: { enabled: true, reply_timing: { talk_value: 1 }, reply_style: { style: 'a' } },
@@ -1193,8 +1198,9 @@ describe('BotConfigPage 特征化', () => {
       const defaultSubtabNames = within(subtabList)
         .getAllByRole('tab')
         .map((tab) => tab.textContent)
-      expect(defaultSubtabNames).toEqual(['总览', '时机子页'])
-      // 回复风格已迁至人格配置，不再列为聊天子页。
+      // 回复风格的基础提示词已迁至人格配置，其余字段以「聊天流prompt」子页默认显示，不再折叠在高级子页中。
+      expect(defaultSubtabNames).toEqual(['总览', '时机子页', '聊天流prompt'])
+      // 不再以「回复风格」原名列为聊天子页。
       expect(within(subtabList).queryByRole('tab', { name: '回复风格' })).not.toBeInTheDocument()
 
       await user.click(within(subtabList).getByRole('tab', { name: '时机子页' }))
@@ -1318,9 +1324,7 @@ describe('BotConfigPage 特征化', () => {
       await enterDetailMode(user, 'form-solo')
 
       const tabList = await openConfigMenu(user)
-      const tabNames = within(tabList)
-        .getAllByRole('menuitem')
-        .map((tab) => tab.textContent)
+      const tabNames = getConfigPageMenuItems(tabList).map((tab) => tab.textContent)
       expect(tabNames).toEqual(['单独'])
     })
 
@@ -1342,9 +1346,7 @@ describe('BotConfigPage 特征化', () => {
       await enterDetailMode(user, 'form-alpha')
 
       const tabList = await openConfigMenu(user)
-      const tabNames = within(tabList)
-        .getAllByRole('menuitem')
-        .map((tab) => tab.textContent)
+      const tabNames = getConfigPageMenuItems(tabList).map((tab) => tab.textContent)
       expect(tabNames).toEqual(['alpha配置', 'zeta配置'])
     })
   })
@@ -1380,9 +1382,7 @@ describe('BotConfigPage 补充覆盖', () => {
     await renderBotPage()
     await user.click(screen.getByRole('tab', { name: '详细设置' }))
     const tabList = await openConfigMenu(user)
-    const tabNames = within(tabList)
-      .getAllByRole('menuitem')
-      .map((tab) => tab.textContent)
+    const tabNames = getConfigPageMenuItems(tabList).map((tab) => tab.textContent)
     expect(tabNames).toEqual(['有序', '无序'])
   })
 
