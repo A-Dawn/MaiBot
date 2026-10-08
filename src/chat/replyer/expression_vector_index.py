@@ -641,6 +641,21 @@ class ExpressionVectorIndex:
         }]
 
     @staticmethod
+    def _stored_profile_fingerprint(stored: Dict[str, Any]) -> Dict[str, Any]:
+        """恢复旧版模型身份；不完整的清单应报告具体损坏字段。"""
+        fingerprint = stored.get("embedding_fingerprint")
+        if fingerprint:
+            return fingerprint
+        required_fields = ("model_name", "model_identifier", "api_provider", "dimension")
+        missing_fields = [name for name in required_fields if name not in stored]
+        if missing_fields:
+            raise ValueError(f"embedding profile 持久化身份字段缺失: {', '.join(missing_fields)}")
+        return {
+            "model": stored["model_name"], "model_identifier": stored["model_identifier"],
+            "provider": stored["api_provider"], "dimension": stored["dimension"],
+        }
+
+    @staticmethod
     def _attach_space_metadata(
         profiles: List[Dict[str, Any]], payload: Dict[str, Any], current: ExpressionEmbeddingProfile,
     ) -> None:
@@ -656,10 +671,7 @@ class ExpressionVectorIndex:
                 item["embedding_fingerprint"] = old["embedding_fingerprint"]
                 item["last_used_at"] = old.get("last_used_at")
             elif item["marker"] == stored.get("marker"):
-                item["embedding_fingerprint"] = stored.get("embedding_fingerprint") or {
-                    "model": stored["model_name"], "model_identifier": stored["model_identifier"],
-                    "provider": stored["api_provider"], "dimension": stored["dimension"],
-                }
+                item["embedding_fingerprint"] = ExpressionVectorIndex._stored_profile_fingerprint(stored)
 
     def _list_vector_spaces(self, index_path: Path, enabled: bool) -> Dict[str, Any]:
         """只读取原子发布的清单，使状态查询无需等待网络请求或重嵌入。"""
@@ -685,10 +697,7 @@ class ExpressionVectorIndex:
             }
             stored = payload.get("embedding_profile", {})
             if marker == stored.get("marker"):
-                fingerprint = stored.get("embedding_fingerprint") or {
-                    "model": stored["model_name"], "model_identifier": stored["model_identifier"],
-                    "provider": stored["api_provider"], "dimension": stored["dimension"],
-                }
+                fingerprint = self._stored_profile_fingerprint(stored)
             vector_count = int(item.get("expression_count", 0))
             cluster_count = int(item.get("cluster_count", 0))
             dimension = int(item.get("embedding_dimension", 0))
