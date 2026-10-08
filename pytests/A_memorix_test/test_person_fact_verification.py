@@ -74,7 +74,10 @@ def test_verified_repeat_promotes_existing_uncertain_claim(tmp_path: Path) -> No
             paragraph_hash=paragraph_hash,
             content=content,
             person_ids=["test:alice"],
-            metadata={"evidence_message_ids": ["old"], "fact_claim": {"stability": "uncertain", "profile_section": "uncertain_notes"}},
+            metadata={
+                "evidence_message_ids": ["old"],
+                "fact_claim": {"stability": "uncertain", "profile_section": "uncertain_notes"},
+            },
             timestamp=None,
         )
         assert store.list_current_person_fact_claims("test:alice") == []
@@ -125,7 +128,11 @@ async def test_257_uncertain_facts_remain_searchable_and_historical_recheck_is_i
                 "chat_id": "stream-1",
                 "evidence_source": "user_supported",
                 "evidence_message_ids": [f"m-{index}"],
-                "fact_claim": {"stability": "uncertain", "profile_section": "uncertain_notes", "authority": "summary_derived"},
+                "fact_claim": {
+                    "stability": "uncertain",
+                    "profile_section": "uncertain_notes",
+                    "authority": "summary_derived",
+                },
             }
             paragraph_hash = store.add_paragraph(
                 content=text, source="person_fact:test:alice", metadata=metadata, knowledge_type="factual"

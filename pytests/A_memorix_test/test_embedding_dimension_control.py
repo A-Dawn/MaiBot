@@ -67,8 +67,12 @@ def test_auto_embedding_fingerprint_uses_resolved_candidate_model(monkeypatch):
     adapter._dimension = 8
     adapter._dimension_detected = True
     model_info_by_name = {
-        "embedding-model": SimpleNamespace(name="embedding-model", api_provider="provider-1", model_identifier="model-id", extra_params={}),
-        "fallback-model": SimpleNamespace(name="fallback-model", api_provider="provider-2", model_identifier="fallback-id", extra_params={}),
+        "embedding-model": SimpleNamespace(
+            name="embedding-model", api_provider="provider-1", model_identifier="model-id", extra_params={}
+        ),
+        "fallback-model": SimpleNamespace(
+            name="fallback-model", api_provider="provider-2", model_identifier="fallback-id", extra_params={}
+        ),
     }
 
     monkeypatch.setattr(adapter, "_resolve_candidate_model_names", lambda: ["embedding-model", "fallback-model"])
