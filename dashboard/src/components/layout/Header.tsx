@@ -102,7 +102,7 @@ interface HeaderProps {
   workspaceMode: WorkspaceMode
 }
 
-type HeaderActionId = 'search' | 'settings' | 'docs' | 'language' | 'theme' | 'logout'
+type HeaderActionId = 'settings' | 'docs' | 'language' | 'theme' | 'logout'
 
 export function Header({
   extensions = [],
@@ -286,11 +286,7 @@ export function Header({
     await logout()
   }
 
-  const activeHeaderAction: HeaderActionId | null = languageMenuOpen
-    ? 'language'
-    : searchOpen
-      ? 'search'
-      : null
+  const activeHeaderAction: HeaderActionId | null = languageMenuOpen ? 'language' : null
   const highlightedHeaderAction =
     hoveredWorkspace === null ? (hoveredHeaderAction ?? activeHeaderAction) : null
 
