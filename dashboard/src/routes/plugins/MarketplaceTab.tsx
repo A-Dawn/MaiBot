@@ -13,6 +13,7 @@ import { PluginCard } from './PluginCard'
 
 const SURPRISE_PLUGIN_COUNT = 4
 const SURPRISE_CANDIDATE_LIMIT = 20
+const SURPRISE_SEED_STORAGE_KEY = 'plugins-market-surprise-seed'
 const FRESHNESS_BOOST_WEIGHT = 4
 const FRESHNESS_BOOST_WINDOW_DAYS = 120
 const LAUNCH_BOOST_WEIGHT = 12
@@ -270,7 +271,14 @@ export function MarketplaceTab({
   getStatusBadge,
   getIncompatibleReason,
 }: MarketplaceTabProps) {
-  const [surpriseSeed] = useState(() => Math.random().toString(36).slice(2))
+  const [surpriseSeed] = useState(() => {
+    // 同一浏览器会话沿用抽选种子，返回市场或重挂载时不重新抽选推荐位。
+    const savedSeed = sessionStorage.getItem(SURPRISE_SEED_STORAGE_KEY)
+    if (savedSeed) return savedSeed
+    const seed = Math.random().toString(36).slice(2)
+    sessionStorage.setItem(SURPRISE_SEED_STORAGE_KEY, seed)
+    return seed
+  })
   const [renderTime] = useState(() => Date.now())
 
   // 过滤插件
