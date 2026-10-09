@@ -31,7 +31,7 @@ description = "返信に添付する画像、メンション、絵文字はシ�
 [retro_replyer]
 display_name = "レトロ返信"
 advanced = true
-description = "レトロモード（experimental.replyer_retro_prompt）のグループチャット返信テンプレート。返信指示をひとつのテンプレートにまとめ、そのまま 1 通のメッセージとして送信する。"
+description = "レトロモード（experimental.replyer_retro_prompt）のグループチャット返信テンプレート。ペルソナとチャットの注意事項を先頭の system メッセージにまとめ、残りのテンプレートを user メッセージとして送信する。"
 
 [retro_replyer_light]
 display_name = "レトロ返信（短め）"

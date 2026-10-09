@@ -2,11 +2,11 @@
 
 开启 `experimental.replyer_retro_prompt` 后，replyer 按旧版（0.12.x）的组织方式生成提示词：
 
-- 全部回复指令集中在一份完整模板里，模板由若干块占位符拼接而成；
+- 人设和聊天注意事项合并为首条 system 消息，其余回复指令由模板占位符拼接而成；
 - 群聊、群聊简短回复、私聊、私聊补充自己发言各用一套模板；
-- 整段模板作为唯一一条 user 消息发送，而不是当前的「system + 历史 + 末条 user」三段式。
+- 回复风格保留在模板原位置，整段模板作为一条 user 消息发送。
 
-历史聊天记录在这一模式下渲染成纯文本填入 `{dialogue_prompt}`，不再作为独立 ContextItem 发送。
+历史 assistant 内容直接丢弃，其余聊天记录渲染成纯文本填入 `{dialogue_prompt}`。
 旧版模板里由知识检索、工具信息、动作描述填充的块在当前版本没有对应来源，因此不再保留这些占位符。
 """
 
@@ -58,16 +58,31 @@ class RetroReplyPromptMixin:
         think_level: int = 1,
         reply_tool_args: Optional[Dict[str, Any]] = None,
     ) -> List[ContextItem]:
-        """构建唯一一条承载完整复古模板的 user 消息。
+        """构建首条人设与注意事项 system 消息，以及复古模板 user 消息。
 
         聊天记录已经渲染进模板的对话块，因此这里不再附加图片 Item，与旧版的纯文本请求保持一致。
         """
 
+        # 历史模型输出和自身回复不参与复古 replyer 的模板与关键词反应构建。
+        chat_history = [
+            message
+            for message in chat_history
+            if not isinstance(message, ModelOutputContextMessage)
+            and not (isinstance(message, SessionBackedMessage) and message.source_kind == "guided_reply")
+        ]
         prompt_name = self._select_retro_prompt_name(
             reply_message=reply_message,
             stream_id=stream_id,
             think_level=think_level,
             reply_tool_args=reply_tool_args,
+        )
+        system_prompt = "\n\n".join(
+            block.strip()
+            for block in (
+                self._build_personality_prompt(),
+                self._build_group_chat_attention_block(self._resolve_session_id(stream_id)),
+            )
+            if block.strip()
         )
         template_context = self._build_retro_template_context(
             chat_history=chat_history,
@@ -76,10 +91,12 @@ class RetroReplyPromptMixin:
             reply_reference=str((reply_tool_args or {}).get("reply_reference") or ""),
             expression_habits=expression_habits,
             reply_requirements=reply_requirements,
-            stream_id=stream_id,
         )
         prompt = self._load_prompt(prompt_name, **template_context)
-        return [ContextItemBuilder().set_role(RoleType.User).add_text_content(prompt).build()]
+        return [
+            ContextItemBuilder().set_role(RoleType.System).add_text_content(system_prompt).build(),
+            ContextItemBuilder().set_role(RoleType.User).add_text_content(prompt).build(),
+        ]
 
     def _select_retro_prompt_name(
         self,
@@ -131,18 +148,15 @@ class RetroReplyPromptMixin:
         reply_reference: str,
         expression_habits: str,
         reply_requirements: str,
-        stream_id: Optional[str],
     ) -> Dict[str, str]:
         """按旧版的块顺序准备模板占位符内容。"""
 
-        session_id = self._resolve_session_id(stream_id)
         combined_reference = self._build_reply_reference_message(reply_reason, reply_reference)
         # 旧版按概率用备选表达风格整体替换人设里的表达风格，而不是追加一条风格消息
         reply_style = self._select_temporary_reply_style() or self._select_reply_style()
         return {
             "bot_name": global_config.bot.nickname,
             "sender_name": self._build_retro_sender_name(chat_history, reply_message),
-            "identity": self._build_personality_prompt(),
             "reply_style": reply_style,
             "expression_habits_block": expression_habits.strip(),
             "extra_info_block": self._build_retro_extra_info_block(reply_requirements),
@@ -154,7 +168,6 @@ class RetroReplyPromptMixin:
                 chat_history=chat_history,
                 reply_message=reply_message,
             ),
-            "group_chat_attention_block": self._build_group_chat_attention_block(session_id),
         }
 
     @staticmethod
@@ -230,6 +243,10 @@ class RetroReplyPromptMixin:
             pending_session_messages.clear()
 
         for message in chat_history:
+            if isinstance(message, ModelOutputContextMessage):
+                continue
+            if isinstance(message, SessionBackedMessage) and message.source_kind == "guided_reply":
+                continue
             # 有原始会话消息时交给统一的可读渲染，保证与其它提示词中的聊天记录格式一致
             if isinstance(message, SessionBackedMessage) and message.original_message is not None:
                 pending_session_messages.append(message.original_message)
@@ -248,10 +265,7 @@ class RetroReplyPromptMixin:
         """渲染没有原始会话消息的历史条目。"""
 
         bot_name = global_config.bot.nickname
-        if isinstance(message, ModelOutputContextMessage):
-            content = " ".join((message.content or "").split()).strip()
-            speaker = bot_name
-        elif isinstance(message, SessionBackedMessage):
+        if isinstance(message, SessionBackedMessage) and message.source_kind != "guided_reply":
             speaker, content = parse_speaker_content(message.processed_plain_text)
             speaker = speaker or ""
             content = " ".join(content.split()).strip()

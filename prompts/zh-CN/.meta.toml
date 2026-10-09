@@ -31,7 +31,7 @@ description = "说明回复附带的图片、@ 和表情包由系统发送，避
 [retro_replyer]
 display_name = "复古回复"
 advanced = true
-description = "复古模式（experimental.replyer_retro_prompt）下的群聊回复模板，把全部回复指令集中在一份模板里，整段作为一条消息发送。"
+description = "复古模式（experimental.replyer_retro_prompt）下的群聊回复模板，人设与聊天注意事项作为首条 system 消息，其余模板作为 user 消息发送。"
 
 [retro_replyer_light]
 display_name = "复古回复（简短）"

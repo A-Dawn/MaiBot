@@ -31,7 +31,7 @@ description = "Explains that the system sends reply images, mentions and emojis,
 [retro_replyer]
 display_name = "Retro reply"
 advanced = true
-description = "Group chat reply template for retro mode (experimental.replyer_retro_prompt), which puts all reply instructions into a single template sent as one message."
+description = "Group chat reply template for retro mode (experimental.replyer_retro_prompt). Persona and chat guidelines are sent in the first system message; the remaining template is sent as a user message."
 
 [retro_replyer_light]
 display_name = "Retro reply (short)"

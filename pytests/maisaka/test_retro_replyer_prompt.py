@@ -22,7 +22,8 @@ from src.common.prompt_i18n import (
     load_prompt,
 )
 from src.config.config import global_config
-from src.llm_models.payload_content.context_item import ContextTextPart, RoleType
+from src.llm_models.payload_content.context_item import ContextItemBuilder, ContextTextPart, RoleType
+from src.maisaka.context.messages import ModelOutputContextMessage
 from src.maisaka.context.planner_messages import build_session_backed_text_message
 
 RETRO_LOCALES = ("zh-CN", "en-US", "ja-JP")
@@ -32,8 +33,6 @@ GROUP_PLACEHOLDERS = {
     "dialogue_prompt",
     "expression_habits_block",
     "extra_info_block",
-    "group_chat_attention_block",
-    "identity",
     "keywords_reaction_prompt",
     "planner_reasoning",
     "reply_style",
@@ -107,10 +106,9 @@ def test_retro_request_messages_fill_single_template(monkeypatch: pytest.MonkeyP
         reply_tool_args={},
     )
 
-    assert len(items) == 1
-    assert items[0].role == RoleType.User
+    assert [item.role for item in items] == [RoleType.System, RoleType.User]
 
-    prompt = read_item_text(items[0])
+    prompt = read_item_text(items[1])
     # 所有占位符都必须被填满，模板里不允许残留花括号
     assert "{" not in prompt
     assert "现在请你读读之前的聊天记录，把握当前的话题" in prompt
@@ -118,6 +116,90 @@ def test_retro_request_messages_fill_single_template(monkeypatch: pytest.MonkeyP
     assert "这次请直接回答吃什么。" in prompt
     assert "小明在问晚饭" in prompt
     assert "[12:30:00] 小明说：晚上吃什么" in prompt
+
+
+@pytest.mark.parametrize("locale", RETRO_LOCALES)
+@pytest.mark.parametrize(
+    "prompt_name", [RETRO_GROUP_PROMPT, RETRO_GROUP_LIGHT_PROMPT, RETRO_PRIVATE_PROMPT, RETRO_PRIVATE_SELF_PROMPT]
+)
+def test_retro_moves_persona_and_guidelines_to_system(
+    locale: str, prompt_name: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    generator = build_retro_generator(is_group_session=True)
+    isolate_retro_blocks(generator, monkeypatch)
+    set_locale(locale)
+    monkeypatch.setattr(generator, "_select_retro_prompt_name", lambda **kwargs: prompt_name)
+    monkeypatch.setattr(generator, "_build_personality_prompt", lambda: "PERSONA_BLOCK")
+    monkeypatch.setattr(generator, "_build_group_chat_attention_block", lambda session_id: "GUIDELINES_BLOCK")
+    monkeypatch.setattr(generator, "_select_temporary_reply_style", lambda: "REPLY_STYLE_BLOCK")
+    items = generator._build_retro_request_messages(
+        chat_history=[build_history_message("HISTORY_BLOCK")],
+        reply_message=None,
+        reply_reason="REASON_BLOCK",
+    )
+
+    assert [item.role for item in items] == [RoleType.System, RoleType.User]
+    system_prompt = read_item_text(items[0])
+    user_prompt = read_item_text(items[1])
+    assert system_prompt == "PERSONA_BLOCK\n\nGUIDELINES_BLOCK"
+    assert "PERSONA_BLOCK" not in user_prompt
+    assert "GUIDELINES_BLOCK" not in user_prompt
+    assert "REPLY_STYLE_BLOCK" not in system_prompt
+    assert user_prompt.count("REPLY_STYLE_BLOCK") == 1
+    assert user_prompt.index("HISTORY_BLOCK") < user_prompt.index("REASON_BLOCK")
+    assert user_prompt.index("REASON_BLOCK") < user_prompt.index("REPLY_STYLE_BLOCK")
+
+
+@pytest.mark.parametrize("locale", RETRO_LOCALES)
+@pytest.mark.parametrize("is_group_session,think_level", [(True, 1), (True, 0), (False, 1)])
+def test_retro_discards_assistant_history(
+    locale: str, is_group_session: bool, think_level: int, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    generator = build_retro_generator(is_group_session=is_group_session)
+    isolate_retro_blocks(generator, monkeypatch)
+    set_locale(locale)
+    bot_reply = build_session_backed_text_message(
+        speaker_name=global_config.bot.nickname,
+        text="我想吃面",
+        timestamp=datetime(2026, 1, 1, 12, 30, 1),
+        source_kind="guided_reply",
+        message_id="bot-1",
+    )
+    assistant_output = ModelOutputContextMessage(
+        output_item=ContextItemBuilder().set_role(RoleType.Assistant).add_text_content("历史模型输出").build()
+    )
+    chat_history = [
+        build_history_message("晚上吃什么"),
+        bot_reply,
+        assistant_output,
+        build_history_message("那就吃面"),
+    ]
+    keyword_history: List[Any] = []
+
+    def capture_keyword_history(**kwargs: Any) -> str:
+        keyword_history.extend(kwargs["chat_history"])
+        return ""
+
+    monkeypatch.setattr(generator, "_build_keyword_reaction_prompt", capture_keyword_history)
+    items = generator._build_retro_request_messages(
+        chat_history=chat_history,
+        reply_message=None,
+        reply_reason="一起吃面",
+        think_level=think_level,
+    )
+
+    assert [item.role for item in items] == [RoleType.System, RoleType.User]
+    prompt = read_item_text(items[1])
+    assert prompt.index("晚上吃什么") < prompt.index("那就吃面")
+    assert "一起吃面" in prompt
+    assert "我想吃面" not in prompt
+    assert "历史模型输出" not in prompt
+    assert keyword_history == [chat_history[0], chat_history[-1]]
+    dialogue = generator._build_retro_dialogue_block(chat_history)
+    assert "我想吃面" not in dialogue
+    assert "历史模型输出" not in dialogue
+    assert generator._render_retro_history_line(bot_reply) == ""
+    assert generator._render_retro_history_line(assistant_output) == ""
 
 
 @pytest.mark.parametrize(
@@ -165,10 +247,9 @@ def test_build_request_messages_switches_to_retro_mode(monkeypatch: pytest.Monke
         reply_tool_args={},
     )
 
-    assert len(retro_items) == 1
-    assert retro_items[0].role == RoleType.User
+    assert [item.role for item in retro_items] == [RoleType.System, RoleType.User]
     # think_level=0 应命中群聊轻量模板，并带上当前思考
-    retro_prompt_text = read_item_text(retro_items[0])
+    retro_prompt_text = read_item_text(retro_items[1])
     assert "现在请你读读之前的聊天记录，然后给出日常且口语化的回复" in retro_prompt_text
     assert "小明在问晚饭" in retro_prompt_text
 
@@ -251,7 +332,6 @@ def test_retro_template_context_covers_every_placeholder(monkeypatch: pytest.Mon
         reply_reference="",
         expression_habits="",
         reply_requirements="",
-        stream_id="session-1",
     )
 
     # 模板上下文的键必须覆盖所有模板用到的占位符，否则加载模板时会缺参
