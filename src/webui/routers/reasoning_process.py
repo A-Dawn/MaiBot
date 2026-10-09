@@ -4,6 +4,7 @@ from html import unescape
 from pathlib import Path
 from typing import Any
 from urllib.parse import unquote, urlparse
+import asyncio
 import base64
 import json
 import mimetypes
@@ -24,6 +25,7 @@ from src.llm_models.payload_content.context_item import CONTEXT_ITEM_SCHEMA_VERS
 from src.llm_models.payload_content.context_protocol import ContextProtocolMode, validate_context_items
 from src.llm_models.request_snapshot import (
     deserialize_context_item_snapshot,
+    read_request_snapshot,
     serialize_generation_attempt,
     serialize_context_item_snapshot,
 )
@@ -809,7 +811,7 @@ def _extract_prompt_metadata_from_html(content: str) -> dict[str, object]:
 
 def _load_prompt_json(file_path: Path) -> dict[str, Any]:
     try:
-        payload = json.loads(file_path.read_text(encoding="utf-8", errors="replace"))
+        payload = read_request_snapshot(file_path)
     except (OSError, TypeError, ValueError, json.JSONDecodeError):
         return {}
     return _normalize_prompt_json_payload(payload) if isinstance(payload, dict) else {}
@@ -1245,7 +1247,7 @@ def _extract_prompt_metadata(file_path: Path) -> dict[str, object]:
     suffix = file_path.suffix.lower()
     if suffix == ".json":
         try:
-            raw_payload = json.loads(content)
+            raw_payload = read_request_snapshot(file_path)
         except (TypeError, ValueError, json.JSONDecodeError):
             return {}
         return _extract_prompt_metadata_from_json_payload(
@@ -2072,12 +2074,14 @@ def get_reasoning_prompt_file(path: str = Query(...)):
     content = file_path.read_text(encoding="utf-8", errors="replace")
     if file_path.suffix.lower() == ".json":
         try:
-            raw_payload = json.loads(content)
+            raw_payload = read_request_snapshot(file_path)
         except (TypeError, ValueError, json.JSONDecodeError):
             raw_payload = {}
         payload = _normalize_prompt_json_payload(raw_payload) if isinstance(raw_payload, dict) else {}
         metadata = _extract_prompt_metadata_from_json_payload(payload)
-        if isinstance(raw_payload, dict) and _is_jargon_learning_update_payload(raw_payload):
+        if isinstance(raw_payload, dict) and (
+            _is_jargon_learning_update_payload(raw_payload) or file_path.with_suffix(".events.jsonl").exists()
+        ):
             content = json.dumps(payload, ensure_ascii=False, indent=2, default=str)
         message_avatars = _load_prompt_message_avatar_map(path, content)
     else:
@@ -2125,7 +2129,7 @@ async def replay_reasoning_prompt(request: ReasoningReplayRequest):
     tool_definitions = request.tool_definitions
     if tool_definitions is None and request.source_path:
         source_path = _resolve_prompt_log_path(request.source_path, {".json"})
-        source_payload = _load_prompt_json(source_path)
+        source_payload = await asyncio.to_thread(_load_prompt_json, source_path)
         raw_tool_definitions = source_payload.get("tool_definitions")
         if isinstance(raw_tool_definitions, list):
             tool_definitions = [item for item in raw_tool_definitions if isinstance(item, dict)]

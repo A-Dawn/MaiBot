@@ -1025,12 +1025,13 @@ class LLMOrchestrator:
         original_response_request = request if isinstance(request, ResponseRequest) else None
         active_request: ClientRequest = request
 
-        def ensure_attempt_snapshot(error: Exception) -> None:
+        async def ensure_attempt_snapshot(error: Exception) -> None:
             """确保内置或插件 Provider 的每次失败都有统一快照记录。"""
 
             if has_request_snapshot(error):
                 return
-            snapshot_path = save_failed_request_snapshot(
+            snapshot_path = await asyncio.to_thread(
+                save_failed_request_snapshot,
                 api_provider=api_provider,
                 client_type=api_provider.client_type,
                 error=error,
@@ -1061,10 +1062,10 @@ class LLMOrchestrator:
                     request=active_request,
                     response=response,
                 )
-                mark_request_succeeded(active_request, response)
+                await asyncio.to_thread(mark_request_succeeded, active_request, response)
                 return response
             except EmptyResponseException as e:
-                ensure_attempt_snapshot(e)
+                await ensure_attempt_snapshot(e)
                 # 空回复：通常为临时问题，单独记录并重试
                 original_error_info = self._get_original_error_info(e)
                 retry_remain -= 1
@@ -1085,11 +1086,11 @@ class LLMOrchestrator:
                     reason="模型返回空回复",
                     retry_interval=api_provider.retry_interval,
                 )
-                update_failed_request_attempt(e, status="retrying", retry_interval=api_provider.retry_interval)
+                await asyncio.to_thread(update_failed_request_attempt, e, status="retrying", retry_interval=api_provider.retry_interval)
                 await asyncio.sleep(api_provider.retry_interval)
 
             except NetworkConnectionError as e:
-                ensure_attempt_snapshot(e)
+                await ensure_attempt_snapshot(e)
                 # 网络错误：单独记录并重试
                 # 尝试从链式异常中获取原始错误信息以诊断具体原因
                 original_error_info = self._get_original_error_info(e)
@@ -1134,11 +1135,11 @@ class LLMOrchestrator:
                     reason="网络错误",
                     retry_interval=api_provider.retry_interval,
                 )
-                update_failed_request_attempt(e, status="retrying", retry_interval=api_provider.retry_interval)
+                await asyncio.to_thread(update_failed_request_attempt, e, status="retrying", retry_interval=api_provider.retry_interval)
                 await asyncio.sleep(api_provider.retry_interval)
 
             except RespNotOkException as e:
-                ensure_attempt_snapshot(e)
+                await ensure_attempt_snapshot(e)
                 original_error_info = self._get_original_error_info(e)
                 task_display = self.request_type or "未知任务"
 
@@ -1166,7 +1167,7 @@ class LLMOrchestrator:
                         reason=f"HTTP {e.status_code}",
                         retry_interval=api_provider.retry_interval,
                     )
-                    update_failed_request_attempt(e, status="retrying", retry_interval=api_provider.retry_interval)
+                    await asyncio.to_thread(update_failed_request_attempt, e, status="retrying", retry_interval=api_provider.retry_interval)
                     await asyncio.sleep(api_provider.retry_interval)
                     continue
 
@@ -1183,7 +1184,7 @@ class LLMOrchestrator:
                         img_target_size=target_size,
                     )
                     active_request = active_request.copy_with(context_items=compressed_messages)
-                    update_failed_request_attempt(e, status="retrying")
+                    await asyncio.to_thread(update_failed_request_attempt, e, status="retrying")
                     continue
 
                 if e.status_code == 413 and can_retry_with_compression:
@@ -1193,7 +1194,7 @@ class LLMOrchestrator:
                     # 压缩消息本身不消耗重试次数
                     compressed_messages = compress_messages(active_request.context_items)
                     active_request = active_request.copy_with(context_items=compressed_messages)
-                    update_failed_request_attempt(e, status="retrying")
+                    await asyncio.to_thread(update_failed_request_attempt, e, status="retrying")
                     continue
 
                 # 不可重试的HTTP错误
@@ -1203,7 +1204,7 @@ class LLMOrchestrator:
                 raise ModelAttemptFailed(f"模型 '{model_info.name}' 遇到硬错误", original_exception=e) from e
 
             except RespParseException as e:
-                ensure_attempt_snapshot(e)
+                await ensure_attempt_snapshot(e)
                 original_error_info = self._get_original_error_info(e)
                 retry_remain -= 1
                 task_display = self.request_type or "未知任务"
@@ -1224,14 +1225,14 @@ class LLMOrchestrator:
                     reason="响应解析失败",
                     retry_interval=api_provider.retry_interval,
                 )
-                update_failed_request_attempt(e, status="retrying", retry_interval=api_provider.retry_interval)
+                await asyncio.to_thread(update_failed_request_attempt, e, status="retrying", retry_interval=api_provider.retry_interval)
                 await asyncio.sleep(api_provider.retry_interval)
 
             except ReqAbortException:
                 raise
 
             except Exception as e:
-                ensure_attempt_snapshot(e)
+                await ensure_attempt_snapshot(e)
                 logger.error(traceback.format_exc())
 
                 original_error_info = self._get_original_error_info(e)
@@ -1273,7 +1274,8 @@ class LLMOrchestrator:
                 model_name=model_name,
                 timeout_s=timeout_s,
             )
-            snapshot_path = save_failed_request_snapshot(
+            snapshot_path = await asyncio.to_thread(
+                save_failed_request_snapshot,
                 api_provider=api_provider,
                 client_type=api_provider.client_type,
                 error=timeout_error,
@@ -1405,7 +1407,8 @@ class LLMOrchestrator:
             except ModelAttemptFailed as e:
                 last_exception = e.original_exception or e
                 if not has_request_snapshot(last_exception):
-                    snapshot_path = save_failed_request_snapshot(
+                    snapshot_path = await asyncio.to_thread(
+                        save_failed_request_snapshot,
                         api_provider=api_provider,
                         client_type=api_provider.client_type,
                         error=last_exception,
@@ -1420,7 +1423,7 @@ class LLMOrchestrator:
                 self._adjust_model_usage(model_info.name, penalty_delta=1, usage_penalty_delta=-1)
                 failed_models_this_request.add(model_info.name)
                 if model_index < max_attempts - 1:
-                    update_failed_request_attempt(last_exception, status="switching_model")
+                    await asyncio.to_thread(update_failed_request_attempt, last_exception, status="switching_model")
 
                 if isinstance(last_exception, RespNotOkException) and last_exception.status_code == 400:
                     logger.warning("收到客户端错误 (400)，跳过当前模型并继续尝试其他模型。")
@@ -1428,7 +1431,7 @@ class LLMOrchestrator:
 
         logger.error(f"所有 {max_attempts} 个模型均尝试失败。")
         if last_exception:
-            mark_request_final_failure(last_exception)
+            await asyncio.to_thread(mark_request_final_failure, last_exception)
             self._schedule_llm_error_event(
                 model_name=last_model_name,
                 message=str(last_exception),
