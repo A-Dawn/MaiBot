@@ -726,6 +726,8 @@ class MaisakaHeartFlowChatting(MaisakaFocusRuntimeMixin, MaisakaRuntimeDisplayMi
             group_info=self._build_group_info(),
             additional_config={},
         )
+        message.account_id = self.chat_stream.account_id
+        message.scope = self.chat_stream.scope
         message.raw_message = MessageSequence([TextComponent("插件主动聊天任务")])
         message.processed_plain_text = "插件主动聊天任务"
         return message

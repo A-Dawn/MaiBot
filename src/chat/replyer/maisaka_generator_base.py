@@ -684,7 +684,7 @@ class BaseMaisakaReplyGenerator(RetroReplyPromptMixin):
         reply_tool_args: Optional[Dict[str, Any]] = None,
         think_level: int = 1,
     ) -> List[ContextItem]:
-        # 复古模式把所有回复指令集中到一份完整模板里，整段作为一条 user 消息发送
+        # 复古模式将人设与注意事项放在首条 system 消息，其余模板作为一条 user 消息发送
         if global_config.experimental.replyer_retro_prompt:
             return self._build_retro_request_messages(
                 chat_history=chat_history,

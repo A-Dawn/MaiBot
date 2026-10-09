@@ -31,6 +31,8 @@ class Messages(SQLModel, table=True):
     message_id: str = Field(index=True, max_length=255)  # 消息id
     timestamp: datetime = Field(sa_column=Column(DateTime))  # 消息时间，单位为秒
     platform: str = Field(index=True, max_length=100)  # 顶层平台字段
+    account_id: Optional[str] = Field(default=None, max_length=255, nullable=True)  # 机器人账号归属
+    scope: Optional[str] = Field(default=None, max_length=255, nullable=True)  # 路由作用域
     # 消息发送者信息
     user_id: str = Field(index=True, max_length=255)  # 发送者用户id
     user_nickname: str = Field(index=True, max_length=255)  # 发送者昵称

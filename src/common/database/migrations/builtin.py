@@ -45,6 +45,7 @@ from .v36_to_v37 import migrate_v36_to_v37
 from .v37_to_v38 import migrate_v37_to_v38
 from .v38_to_v39 import migrate_v38_to_v39
 from .v39_to_v40 import migrate_v39_to_v40
+from .v40_to_v41 import migrate_v40_to_v41
 from .version_store import SQLiteUserVersionStore
 
 EMPTY_SCHEMA_VERSION = 0
@@ -88,7 +89,8 @@ V37_SCHEMA_VERSION = 37
 V38_SCHEMA_VERSION = 38
 V39_SCHEMA_VERSION = 39
 V40_SCHEMA_VERSION = 40
-LATEST_SCHEMA_VERSION = 40
+V41_SCHEMA_VERSION = 41
+LATEST_SCHEMA_VERSION = 41
 
 _LEGACY_V1_EXCLUSIVE_TABLES = (
     "chat_streams",
@@ -682,6 +684,10 @@ class LatestSchemaVersionDetector(BaseSchemaVersionDetector):
             return None
         if not snapshot.has_column("maisaka_reply_effects", "record_blob"):
             return None
+        if not snapshot.has_table("bot_platform_accounts"):
+            return V39_SCHEMA_VERSION
+        if not all(snapshot.has_column("mai_messages", name) for name in ("account_id", "scope")):
+            return V40_SCHEMA_VERSION
         return LATEST_SCHEMA_VERSION
 
 
@@ -1923,6 +1929,13 @@ def build_default_migration_registry() -> MigrationRegistry:
                 name="v39_to_v40",
                 description="新增适配器上报的 Bot 平台账号表。",
                 handler=migrate_v39_to_v40,
+            ),
+            MigrationStep(
+                version_from=V40_SCHEMA_VERSION,
+                version_to=V41_SCHEMA_VERSION,
+                name="v40_to_v41",
+                description="为消息增加正式 account_id/scope 归属字段。",
+                handler=migrate_v40_to_v41,
             ),
         ]
     )

@@ -180,11 +180,8 @@ class ChatManager:
             raise ValueError("消息缺少平台信息")
         user_id = message.message_info.user_info.user_id
         group_id = message.message_info.group_info.group_id if message.message_info.group_info else None
-        account_id = None
-        scope = None
-        additional_config = message.message_info.additional_config
-        if isinstance(additional_config, dict):
-            account_id, scope = RouteKeyFactory.extract_components(additional_config)
+        route_key = RouteKeyFactory.from_session_message(message)
+        account_id, scope = route_key.account_id, route_key.scope
         session_id = SessionUtils.calculate_session_id(
             platform,
             user_id=user_id,

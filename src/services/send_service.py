@@ -271,12 +271,8 @@ def _inherit_platform_io_route_metadata(target_stream: BotChatSession) -> Dict[s
                 if normalized_value:
                     inherited_metadata[key] = value
 
-    # 当目标会话没有可继承的上下文消息时，至少补齐当前平台账号，
-    # 让按 ``platform + account_id`` 绑定的路由仍有机会命中。
-    if not RouteKeyFactory.extract_components(inherited_metadata)[0]:
-        bot_account = get_bot_account(target_stream.platform, target_stream.account_id)
-        if bot_account:
-            inherited_metadata["platform_io_account_id"] = bot_account
+    # 账号和作用域通过出站消息正式字段继承，不再写入 additional_config。
+    # 暂时保留旧上下文元数据的透传以兼容尚未迁移的适配器，下个版本移除。
 
     if target_stream.group_id and (normalized_group_id := str(target_stream.group_id).strip()):
         inherited_metadata["platform_io_target_group_id"] = normalized_group_id
@@ -571,6 +567,8 @@ def _build_outbound_session_message(
         timestamp=datetime.fromtimestamp(current_time),
         platform=target_stream.platform,
     )
+    outbound_message.account_id = bot_user_id
+    outbound_message.scope = target_stream.scope
     outbound_message.message_info = MessageInfo(
         user_info=UserInfo(
             user_id=bot_user_id,
