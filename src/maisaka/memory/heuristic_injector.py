@@ -17,7 +17,7 @@ from src.config.config import global_config
 from src.maisaka.scenes.factory import get_scene
 from src.person_info.person_info import get_person_id
 from src.services.llm_service import LLMServiceClient
-from src.services.memory_service import MemoryHit, memory_service
+from src.services.memory_service import MemoryHit, allows_silent_recall, memory_service
 
 logger = get_logger("maisaka_heuristic_memory")
 
@@ -302,9 +302,10 @@ class HeuristicMemoryInjector:
         if not person_id and source.startswith(_SOURCE_PERSON_FACT_PREFIX):
             person_id = source[len(_SOURCE_PERSON_FACT_PREFIX) :].strip()
 
+        if not allows_silent_recall(source, metadata):
+            return False
         if hit.hit_type == "episode":
-            episode_source = str(metadata.get("source") or "").strip()
-            return episode_source == f"{_SOURCE_CHAT_SUMMARY_PREFIX}{context.session.session_id}"
+            return bool(metadata.get("summary_subjects_recorded")) and source == f"{_SOURCE_CHAT_SUMMARY_PREFIX}{context.session.session_id}"
 
         if source_type == "person_fact" or source.startswith(_SOURCE_PERSON_FACT_PREFIX):
             return bool(person_id and person_id in context.active_person_ids)

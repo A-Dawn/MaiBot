@@ -123,6 +123,7 @@ _PROFILE_ACTIONS = {
     "observe_identity",
     "resolve_identity",
     "list_attributions",
+    "list_writeback_candidates",
     "review_attribution",
     "query",
     "evidence",

@@ -59,6 +59,10 @@ class MemoryBackgroundTaskService(KernelServiceBase):
             try:
                 await cancellation_safe_to_thread(self.metadata_store.verify_person_fact_batch)
                 await cancellation_safe_to_thread(self.metadata_store.recover_observed_names, 8)
+                await cancellation_safe_to_thread(self.metadata_store.recover_active_group_names, 32)
+                candidate = await cancellation_safe_to_thread(self.metadata_store.take_due_writeback_candidate)
+                if candidate:
+                    await self._ingest_service.ingest_text(**candidate)
             except Exception:
                 logger.exception("人物归属后台核验失败")
                 await self._sleep_background(60.0)

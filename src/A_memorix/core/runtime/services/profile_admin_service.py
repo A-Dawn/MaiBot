@@ -234,6 +234,17 @@ class MemoryProfileAdminService(KernelServiceBase):
         assert self.person_profile_service is not None
 
         act = str(action or "").strip().lower()
+        if act == "list_writeback_candidates":
+            rows = await asyncio.to_thread(
+                self.metadata_store.query,
+                "SELECT rowid AS cursor,id,json_extract(payload,'$.text') AS fact,json_extract(payload,'$.chat_id') AS chat_id,"
+                "json_extract(payload,'$.metadata.evidence_message_ids') AS message_ids FROM person_writeback_candidates "
+                "WHERE person_id=? AND rowid>? ORDER BY rowid LIMIT ?",
+                (kwargs["person_id"],int(kwargs.get("cursor",0)),min(100,max(1,int(kwargs.get("limit",20))))),
+            )
+            for row in rows:
+                row["message_ids"] = json.loads(row["message_ids"])
+            return {"success": True, "items": rows}
         if act == "list_attributions":
             rows = await asyncio.to_thread(
                 self.metadata_store.query,

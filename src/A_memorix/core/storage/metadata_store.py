@@ -190,6 +190,8 @@ class MetadataStore(
         metadata: Optional[Dict[str, Any]] = None,
         knowledge_type: str = "mixed",
         time_meta: Optional[Dict[str, Any]] = None,
+        *,
+        paragraph_hash: Optional[str] = None,
     ) -> str:
         """
         添加段落
@@ -206,7 +208,7 @@ class MetadataStore(
             段落哈希值
         """
         content_normalized = normalize_text(content)
-        hash_value = compute_hash(content_normalized)
+        hash_value = paragraph_hash or compute_hash(content_normalized)
         resolved_knowledge_type = validate_stored_knowledge_type(knowledge_type)
 
         now = datetime.now().timestamp()
@@ -2976,6 +2978,8 @@ class MetadataStore(
             "paragraph_stale_relation_marks",
             "person_profile_refresh_queue",
             "person_profile_alias_overrides",
+            "person_writeback_candidates",
+            "observed_group_cursor",
             "person_fact_verification",
             "person_verification_cursor",
             "observed_person_names",

@@ -10,6 +10,16 @@ from src.common.logger import get_logger
 logger = get_logger("memory_service")
 
 
+def allows_silent_recall(source: str, metadata: Dict[str, Any]) -> bool:
+    if metadata.get("summary_subjects_recorded") is False:
+        return False
+    if metadata.get("source_type") == "chat_summary" or any(
+        str(value or "").startswith("chat_summary:") for value in (source, metadata.get("source"))
+    ):
+        return bool(metadata.get("attribution_verified") or metadata.get("summary_subjects_recorded"))
+    return True
+
+
 @dataclass
 class MemoryHit:
     content: str

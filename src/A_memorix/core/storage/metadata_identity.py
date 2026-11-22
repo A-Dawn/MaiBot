@@ -83,15 +83,6 @@ class MetadataIdentityMixin:
         row = self._conn.execute("SELECT user_id FROM person_identities WHERE person_id=?", (person_id,)).fetchone()
         return row[0] if row else ""
 
-    def observed_names_ready(self, latest_host_message: int) -> bool:
-        target = self._conn.execute("SELECT last_message FROM observed_names_baseline WHERE id=1").fetchone()
-        if target is None:
-            with self.transaction(immediate=True) as conn:
-                conn.execute("INSERT OR IGNORE INTO observed_names_baseline VALUES(1,?)", (latest_host_message,))
-                target = conn.execute("SELECT last_message FROM observed_names_baseline WHERE id=1").fetchone()
-        progress = self._conn.execute("SELECT last_message FROM observed_names_cursor WHERE id=1").fetchone()
-        return target[0] <= (progress[0] if progress else 0)
-
     def observed_name_candidates(self, platform: str, group_id: str, name: str) -> List[str]:
         rows = self._conn.execute(
             "SELECT n.person_id, i.user_id FROM observed_person_names n JOIN person_identities i ON i.person_id=n.person_id "

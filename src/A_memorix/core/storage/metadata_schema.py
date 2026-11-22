@@ -16,7 +16,7 @@ from .knowledge_types import (
 
 logger = get_logger("A_Memorix.MetadataSchema")
 
-SCHEMA_VERSION = 32
+SCHEMA_VERSION = 33
 RUNTIME_AUTO_MIGRATION_MIN_SCHEMA_VERSION = 9
 
 
@@ -66,6 +66,21 @@ class MetadataSchemaMixin:
                 PRIMARY KEY(paragraph_hash, person_id, fact)
             )
         """)
+        columns = {row[1] for row in cursor.execute("PRAGMA table_info(person_fact_verification)")}
+        for name in ("retry_at", "was_verified"):
+            if name not in columns:
+                cursor.execute(f"ALTER TABLE person_fact_verification ADD COLUMN {name} INTEGER NOT NULL DEFAULT 0")
+        cursor.execute("""CREATE INDEX IF NOT EXISTS idx_revoked_by_person ON person_fact_verification(person_id, paragraph_hash)
+                          WHERE was_verified=1 AND state<>'verified'""")
+        cursor.execute("""CREATE INDEX IF NOT EXISTS idx_attribution_retry ON person_fact_verification(retry_at)
+                          WHERE state IN ('insufficient','conflict')""")
+        cursor.execute("""CREATE TABLE IF NOT EXISTS person_writeback_candidates(
+                          id TEXT PRIMARY KEY, person_id TEXT NOT NULL, payload TEXT NOT NULL, retry_at INTEGER NOT NULL)""")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_writeback_retry ON person_writeback_candidates(retry_at)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_writeback_person ON person_writeback_candidates(person_id)")
+        cursor.execute("""CREATE TABLE IF NOT EXISTS observed_group_cursor(
+                          group_id TEXT PRIMARY KEY, last_message INTEGER NOT NULL, pending INTEGER NOT NULL)""")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_observed_group_pending ON observed_group_cursor(pending,last_message)")
         cursor.execute("""CREATE INDEX IF NOT EXISTS idx_person_verification_work
                           ON person_fact_verification(state, priority DESC)""")
         cursor.execute("""CREATE TABLE IF NOT EXISTS person_verification_cursor (
@@ -158,12 +173,12 @@ class MetadataSchemaMixin:
         logger.info(
             f"检测到 metadata schema 需要运行时自动迁移: current={current_version}, target={SCHEMA_VERSION}",
         )
-        if current_version == 31:
-            # 32 的索引均建立在新表上，首次启动不遍历历史消息和记忆。
+        if current_version in (31, 32):
+            # 人物归属升级只更新核验表，不扫描宿主历史消息。
             with self.transaction(immediate=True) as conn:
                 self._ensure_person_identity_tables(conn.cursor())
                 conn.execute("INSERT OR IGNORE INTO schema_migrations VALUES (?, ?)",
-                             (32, datetime.now().timestamp()))
+                             (SCHEMA_VERSION, datetime.now().timestamp()))
             return
         self._repair_historical_foreign_key_violations(current_version=current_version)
         self._migrate_schema()

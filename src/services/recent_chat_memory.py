@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING, Any, Dict, List, Optional, Sequence
 
 from src.A_memorix.core.retrieval import RetrievalResult, RetrievalScope, TopicGraphConfig, TopicGraphRetriever
 from src.A_memorix.core.utils.async_work import cancellation_safe_to_thread
+from .memory_service import allows_silent_recall
 
 if TYPE_CHECKING:
     from src.A_memorix.core.runtime.sdk_memory_kernel import SDKMemoryKernel
@@ -96,4 +97,5 @@ class RecentChatMemorySearch:
                     }
                 )
         hits = kernel._filter_user_visible_hits(hits)
+        hits = [hit for hit in hits if allows_silent_recall(hit["source"], hit["metadata"])]
         return kernel._filter_hits_by_retrieval_type_scope(hits, current_stream_id=chat_id, current_group_id=group_id)

@@ -16,7 +16,7 @@ from sqlmodel import select
 
 
 from src.common.database.database import get_db_session
-from src.common.database.database_model import Individual, Messages, PersonInfo
+from src.common.database.database_model import Individual, PersonInfo
 from src.common.logger import get_logger
 from src.config.config import global_config
 from src.services import llm_service as llm_api
@@ -288,12 +288,10 @@ class PersonProfileService:
             if platform:
                 query = query.where(PersonInfo.platform == platform)
             candidates = set(session.exec(query.limit(2)).all())
-            if metadata_store is not None and platform and group_id:
-                newest = session.exec(select(Messages.id).order_by(Messages.id.desc()).limit(1)).first()
-                if not metadata_store.observed_names_ready(newest or 0):
-                    return ""
         if metadata_store is not None and platform and group_id:
             normalized_platform = platform.split("-")[1] if "-" in platform else platform
+            if not metadata_store.recover_observed_names(32, group_id):
+                return ""
             local = metadata_store.observed_name_candidates(normalized_platform, group_id, key)
             candidates.update(local)
         return next(iter(candidates)) if len(candidates) == 1 else ""
@@ -467,7 +465,11 @@ class PersonProfileService:
             "SELECT DISTINCT paragraph_hash AS hash FROM person_fact_verification "
             "WHERE person_id=? AND state='verified' LIMIT ?", (pid, limit),
         )
-        keys = list(dict.fromkeys(item["hash"] for item in [*proven, *direct]))
+        revoked = self.metadata_store.query(
+            "SELECT DISTINCT paragraph_hash AS hash FROM person_fact_verification "
+            "WHERE person_id=? AND was_verified=1 AND state<>'verified' LIMIT ?", (pid, limit),
+        )
+        keys = list(dict.fromkeys(item["hash"] for item in [*proven, *direct, *revoked]))
         rows = self.metadata_store.get_paragraphs_by_hashes(keys)
         evidence = []
         for key in keys:

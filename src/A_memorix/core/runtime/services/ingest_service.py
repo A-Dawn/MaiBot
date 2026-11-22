@@ -326,19 +326,23 @@ class MemoryIngestService(KernelServiceBase):
         content = normalize_text(kwargs["text"])
         if not content:
             return {"success": True, "stored_ids": [], "reason": "empty_text"}
-        from ...storage.person_verification import inspect_source
+        from ...storage.person_verification import candidate_has_sender, inspect_source
 
-        state, _ = await cancellation_safe_to_thread(
-            inspect_source, {"metadata": {**metadata, "chat_id": kwargs["chat_id"]}}, person_id, content,
-        )
+        provenance = {**metadata, "chat_id": kwargs["chat_id"]}
+        state, _ = await cancellation_safe_to_thread(inspect_source, {"metadata": provenance}, person_id, content)
         if state != "verified":
-            return {"success": True, "stored_ids": [], "detail": f"attribution_{state}"}
+            if state != "insufficient" or not await cancellation_safe_to_thread(candidate_has_sender, provenance, person_id):
+                return {"success": True, "stored_ids": [], "detail": f"attribution_{state}"}
         source = {"platform": str(metadata.get("platform", "")), "chat_id": kwargs["chat_id"],
                   "message_ids": sorted(set(str(value) for value in metadata["evidence_message_ids"])),
                   "observed_at": kwargs.get("timestamp")}
         source["observation_id"] = observation_id(platform=source["platform"], chat_id=source["chat_id"],
                                                    message_ids=source["message_ids"])
         external_id = f"{kwargs['external_id']}:{source['observation_id']}"
+        candidate_id = compute_hash(f"{person_id}:{external_id}:{content}")
+        if state == "insufficient":
+            await cancellation_safe_to_thread(self.metadata_store.hold_writeback_candidate, candidate_id, person_id, kwargs)
+            return {"success": True, "stored_ids": [], "candidate_id": candidate_id, "detail": "attribution_pending"}
         receipt = await cancellation_safe_to_thread(self.metadata_store.get_external_memory_ref, external_id)
         dedup = FactDeduplicator(self.metadata_store, self.embedding_manager, self._paragraph_store())
         if receipt:
@@ -349,6 +353,7 @@ class MemoryIngestService(KernelServiceBase):
                 paragraph = await cancellation_safe_to_thread(self.metadata_store.get_paragraph, receipt["paragraph_hash"])
                 if paragraph is None or paragraph.get("is_deleted"):
                     raise ValueError("人物事实来源已处理，但关联段落已删除")
+                await cancellation_safe_to_thread(self.metadata_store.finish_writeback_candidate, candidate_id)
                 return {"success": True, "stored_ids": [], "skipped_ids": [receipt["paragraph_hash"]],
                         "fact_claim_ids": saved["claim_ids"], "detail": "dedup_replayed"}
             plan = saved["dedup_plan"]
@@ -362,6 +367,7 @@ class MemoryIngestService(KernelServiceBase):
             else:
                 paragraph_hash = await cancellation_safe_to_thread(
                     self.metadata_store.add_paragraph, content=content, source=f"person_fact:{person_id}",
+                    paragraph_hash=compute_hash(f"person_fact:{person_id}:{content}"),
                     knowledge_type="factual", metadata={**metadata, "dedup_phase": "pending",
                                                         "chat_id": kwargs["chat_id"], "person_ids": [person_id]},
                 )
@@ -386,6 +392,7 @@ class MemoryIngestService(KernelServiceBase):
         await cancellation_safe_to_thread(self.metadata_store.upsert_external_memory_ref, external_id=external_id,
                                paragraph_hash=paragraph_hash, source_type="person_fact",
                                metadata={**saved, "dedup_phase": "complete", "claim_ids": claim_ids})
+        await cancellation_safe_to_thread(self.metadata_store.finish_writeback_candidate, candidate_id)
         self._enqueue_person_profile_refresh(person_id, reason="person_fact_deduplicated")
         return {"success": True, "stored_ids": [] if reused else [paragraph_hash],
                 "skipped_ids": [paragraph_hash] if reused else [], "fact_claim_ids": claim_ids,
@@ -528,6 +535,7 @@ class MemoryIngestService(KernelServiceBase):
             content=content,
             source=source,
             metadata=paragraph_meta,
+            paragraph_hash=existing_ref["paragraph_hash"] if source_type=="person_fact" and receipt_metadata and existing_ref else None,
             knowledge_type=resolve_knowledge_type(source_type),
             time_meta=time_meta(timestamp, time_start, time_end),
         )

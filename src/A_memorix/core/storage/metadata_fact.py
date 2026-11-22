@@ -1128,7 +1128,7 @@ class MetadataFactMixin:
     def project_fact_paragraph(
         self, paragraph: Dict[str, Any], person_id: str = "",
     ) -> Optional[Dict[str, Any]]:
-        from .person_verification import bindings
+        from .person_verification import bindings, untracked_summary
 
         projected = self._active_fact_paragraph(paragraph)
         if projected is None:
@@ -1138,6 +1138,11 @@ class MetadataFactMixin:
             metadata = paragraph.get("metadata") or {}
             if person_id or metadata.get("source_type") == "person_fact" or metadata.get("identity_bindings"):
                 return None
+            if metadata.get("source_type") == "chat_summary" or any(
+                str(source or "").startswith("chat_summary:") for source in (paragraph.get("source"), metadata.get("source"))
+            ):
+                return {**projected, "metadata": {**metadata, "attribution_verified": False,
+                                                  "summary_subjects_recorded": not untracked_summary(paragraph)}}
             return projected
         if len(people) != 1 and str(paragraph.get("source") or "").startswith("person_fact:"):
             return None

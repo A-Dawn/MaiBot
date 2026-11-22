@@ -8,7 +8,7 @@ import time
 from src.chat.message_receive.chat_manager import chat_manager
 from src.common.logger import get_logger
 
-from src.A_memorix.core.storage.person_verification import bindings
+from src.A_memorix.core.storage.person_verification import bindings, untracked_summary
 
 from ...retrieval import RetrievalResult, RetrievalScope
 from ...utils.feedback_policy import (
@@ -104,8 +104,8 @@ class MemorySearchHitProcessingService(KernelServiceBase):
         hits = [item for item in hits if not str(
             coerce_metadata_dict(item.get("metadata")).get("source") or item.get("source") or ""
         ).startswith("migration_archive:")]
-        hits = self._filter_fact_paragraph_hits(hits, person_id)
         hits = self._filter_current_effective_hits(self._filter_active_relation_hits(self._filter_episode_hits(hits)))
+        hits = self._filter_fact_paragraph_hits(hits, person_id)
         return [{**hit, "metadata": visible_fact_metadata(coerce_metadata_dict(hit["metadata"]))}
                 if "metadata" in hit else hit for hit in hits]
 
@@ -131,6 +131,9 @@ class MemorySearchHitProcessingService(KernelServiceBase):
                     not linked and (hit.get("metadata") or {}).get("participants")
                 ):
                     continue
+                hit = {**hit, "metadata": {**(hit.get("metadata") or {}),
+                                           "summary_subjects_recorded": bool(linked) and not any(
+                                               untracked_summary(row) for row in linked.values())}}
             if hit.get("type") == "paragraph":
                 row = paragraphs.get(hit.get("hash"))
                 if row is None:
@@ -143,12 +146,16 @@ class MemorySearchHitProcessingService(KernelServiceBase):
                 continue
             elif hit.get("type") == "relation" and relation_paragraphs.get(hit.get("hash")):
                 supported = False
+                safe_for_recall = False
                 for row in relation_paragraphs[hit["hash"]]:
                     if not bindings(row) and self.metadata_store.fact_relation_has_support(hit["hash"], row):
                         supported = True
-                        break
+                        if not untracked_summary(row):
+                            safe_for_recall = True
+                            break
                 if not supported:
                     continue
+                hit = {**hit, "metadata": {**(hit.get("metadata") or {}), "summary_subjects_recorded": safe_for_recall}}
             result.append(hit)
         return result
 

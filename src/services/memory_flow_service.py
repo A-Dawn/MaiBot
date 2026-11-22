@@ -25,6 +25,7 @@ from src.person_info.person_info import Person, get_person_id, store_person_memo
 from src.services import memory_service as memory_service_module
 from src.services.memory_service import memory_service
 from src.A_memorix.core.image.component_paths import build_chat_external_ref, iter_message_image_components
+from src.A_memorix.core.storage.person_verification import expected_statement
 from src.A_memorix.host_service import a_memorix_host_service
 
 from .image_writeback_journal import ImageWritebackJournal
@@ -198,6 +199,9 @@ class PersonFactWritebackService:
             fact = str(item.get("fact", "") if isinstance(item, dict) else item).strip()
             if not fact:
                 continue
+            # 提取提示词使用第三人称，写入时补上已解析的目标姓名，便于阅读静默召回内容。
+            if fact.startswith(("他", "她")) and expected_statement(fact, "", target_bound=True):
+                fact = person_name + fact[1:]
             # 语义判断由提取模型完成，来源 ID 由本次实际输入的消息确定。
             # 记录完整的提取上下文，不把模型生成的消息 ID 写成真实证据。
             await store_person_memory_from_answer(
