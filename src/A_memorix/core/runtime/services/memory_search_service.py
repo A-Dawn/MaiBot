@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional, Sequence
 
+from src.A_memorix.core.utils.async_work import cancellation_safe_to_thread
+
 from src.A_memorix.core.retrieval import RetrievalScope
 from src.A_memorix.core.utils.search_execution_service import (
     SearchExecutionRequest,
@@ -66,7 +68,7 @@ class MemorySearchService(KernelServiceBase):
                 person=request.person_id or None,
                 scope=scope,
             )
-            hits = self._filter_episode_hits([self._episode_hit(row) for row in rows])
+            hits = await cancellation_safe_to_thread(self._filter_user_visible_hits, [self._episode_hit(row) for row in rows], request.person_id)
             hits = self._filter_hits_by_retrieval_scope(hits, scope)
             if request.respect_filter:
                 hits = self._filter_hits_by_retrieval_type_scope(
@@ -93,8 +95,7 @@ class MemorySearchService(KernelServiceBase):
             hits = [dict(item) for item in payload.get("mixed_results", []) if isinstance(item, dict)]
             for item in hits:
                 item.setdefault("metadata", {})
-            filtered = self._filter_hits(hits, request.person_id)
-            filtered = self._filter_user_visible_hits(filtered)
+            filtered = await cancellation_safe_to_thread(self._filter_user_visible_hits, hits, request.person_id)
             filtered = self._filter_hits_by_retrieval_scope(filtered, scope)
             if request.respect_filter:
                 filtered = self._filter_hits_by_retrieval_type_scope(
@@ -126,8 +127,7 @@ class MemorySearchService(KernelServiceBase):
             return {"summary": "", "hits": [], "filtered": True, **self._search_status_fields()}
 
         hits = [self._retrieval_result_hit(item) for item in result.results]
-        filtered = self._filter_hits(hits, request.person_id)
-        filtered = self._filter_user_visible_hits(filtered)
+        filtered = await cancellation_safe_to_thread(self._filter_user_visible_hits, hits, request.person_id)
         filtered = self._filter_hits_by_retrieval_scope(filtered, scope)
         if request.respect_filter:
             filtered = self._filter_hits_by_retrieval_type_scope(

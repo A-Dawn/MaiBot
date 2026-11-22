@@ -32,49 +32,33 @@ def observe_identity(
     aliases: List[str],
     group_id: str = "",
     refresh_profile: bool = False,
+    confirmed_sender: bool = True,
 ) -> Dict[str, Any]:
-    """从真实发送者元数据登记身份；首次接入时补收已有消息和人物主档中的称呼。"""
+    """登记当前消息实际出现的称呼，使用与宿主一致的规范账号。"""
     from sqlmodel import select
 
     from src.common.database.database import get_db_session
-    from src.common.database.database_model import Messages, PersonInfo
-    from src.person_info.person_info import get_person_id
+    from src.common.database.database_model import Individual, PersonInfo
+    from src.person_info.identity import person_id_for, resolve_user_id
 
     if not platform.strip() or not user_id.strip():
         raise ValueError("消息缺少真实的发送者 platform/user_id")
-    # 与宿主 get_person_id 对适配器平台前缀的处理保持一致。
+    canonical_user = resolve_user_id(platform, user_id)
     identity_platform = platform.split("-")[1] if "-" in platform else platform
-    person_id = get_person_id(platform, user_id)
-    existing = store.get_person_identity(person_id)
+    person_id = person_id_for(platform, canonical_user)
     preferred_name = ""
-    if existing is None or refresh_profile:
+    previous_user = store.bound_account(person_id)
+    if not previous_user:
         with get_db_session(auto_commit=False) as session:
-            person = session.exec(select(PersonInfo).where(PersonInfo.person_id == person_id)).first()
-            if person is not None:
-                preferred_name = person.person_name or ""
-                aliases = [*aliases, person.person_name or "", person.user_nickname]
-                cards = json.loads(person.group_cardname) if person.group_cardname else []
-                aliases.extend(str(card.get("group_cardname") or card.get("group_nick_name") or "") for card in cards)
-    if existing is None:
-        with get_db_session(auto_commit=False) as session:
-            # 只按 ID 收集旧称呼，不用同名检索建立身份关系。
-            historical = session.exec(
-                select(Messages.user_nickname, Messages.user_cardname)
-                .where(Messages.platform.in_([platform, identity_platform]), Messages.user_id == user_id)
-                .distinct()
-            ).all()
-            aliases = [*aliases, *(name for pair in historical for name in pair if name)]
-    if refresh_profile:
-        override = store.get_person_profile_alias_override(person_id)
-        if override:
-            aliases = [*aliases, *override["aliases"]]
+            preferred_name = session.exec(
+                select(Individual.display_name).join(PersonInfo).where(PersonInfo.person_id == person_id)
+            ).first() or ""
     return store.observe_person_identity(
-        person_id=person_id,
-        platform=identity_platform,
-        user_id=user_id,
-        aliases=aliases,
-        group_id=group_id,
-        preferred_name=preferred_name,
+        person_id=person_id, platform=identity_platform, user_id=canonical_user,
+        aliases=aliases, group_id=group_id, preferred_name=preferred_name or ("" if confirmed_sender else canonical_user), include_history=False,
+        confirmed_sender=confirmed_sender,
+        previous_user_id=previous_user if previous_user and previous_user != canonical_user
+        and resolve_user_id(platform, previous_user) == canonical_user else "",
     )
 
 
@@ -92,9 +76,8 @@ class SummaryIdentityContext:
         user_id: str,
         nickname: str = "",
         cardname: str = "",
+        *, confirmed_sender: bool = False,
     ) -> str:
-        from src.person_info.person_info import get_person_id
-
         group = message.message_info.group_info
         identity = observe_identity(
             self.store,
@@ -102,7 +85,7 @@ class SummaryIdentityContext:
             user_id=user_id,
             aliases=[nickname, cardname],
             group_id=group.group_id if group else "",
-            refresh_profile=get_person_id(message.platform, user_id) not in self.references,
+            confirmed_sender=confirmed_sender,
         )
         person_id = identity["person_id"]
         if person_id not in self.references:
@@ -110,7 +93,8 @@ class SummaryIdentityContext:
             self.references[person_id] = reference
             self.identities[reference] = identity
         else:
-            self.identities[self.references[person_id]] = identity
+            previous = self.identities[self.references[person_id]]
+            previous["aliases"] = list(dict.fromkeys([*previous["aliases"], *identity["aliases"]]))
         return self.references[person_id]
 
     @staticmethod
@@ -135,7 +119,7 @@ class SummaryIdentityContext:
             original = matches[0] if matches else None
         if original is not None:
             sender = original.message_info.user_info
-            author = self._identity(original, sender.user_id, sender.user_nickname, sender.user_cardname or "")
+            author = self._identity(original, sender.user_id, sender.user_nickname, sender.user_cardname or "", confirmed_sender=True)
             content = self._components(original, original.raw_message.components, depth + 1, include_reply=False)
             original_date = original.timestamp.strftime("%Y-%m-%d")
             date_note = (
@@ -205,7 +189,7 @@ class SummaryIdentityContext:
         current_date = ""
         for message in self.messages:
             sender = message.message_info.user_info
-            author = self._identity(message, sender.user_id, sender.user_nickname, sender.user_cardname or "")
+            author = self._identity(message, sender.user_id, sender.user_nickname, sender.user_cardname or "", confirmed_sender=True)
             date = message.timestamp.strftime("%Y-%m-%d")
             if date != current_date:
                 lines.append(f"日期：{date}")

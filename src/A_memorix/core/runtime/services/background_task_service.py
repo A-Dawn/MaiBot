@@ -28,6 +28,8 @@ class MemoryBackgroundTaskService(KernelServiceBase):
             self._ensure_background_task("vector_index_training", self._vector_index_training_loop)
             self._ensure_background_task("memory_maintenance", self._memory_maintenance_loop)
             self._ensure_background_task("storage_cleanup", self._storage_cleanup_loop)
+            if self._cfg("person_profile.attribution_verification_enabled", True):
+                self._ensure_background_task("person_fact_verification", self._person_verification_loop)
             self._ensure_background_task("person_profile_refresh", self._person_profile_refresh_loop)
             self._ensure_background_task("person_profile_refresh_queue", self._person_profile_refresh_queue_loop)
             self._ensure_background_task("feedback_correction", self._feedback_correction_loop)
@@ -48,6 +50,18 @@ class MemoryBackgroundTaskService(KernelServiceBase):
         if task is not None and not task.done():
             return
         self._background_tasks[name] = asyncio.create_task(factory(), name=f"A_Memorix.{name}")
+
+    async def _person_verification_loop(self) -> None:
+        while not self._background_stopping:
+            await self._sleep_background(5.0)
+            if self._background_stopping:
+                return
+            try:
+                await cancellation_safe_to_thread(self.metadata_store.verify_person_fact_batch)
+                await cancellation_safe_to_thread(self.metadata_store.recover_observed_names, 8)
+            except Exception:
+                logger.exception("人物归属后台核验失败")
+                await self._sleep_background(60.0)
 
     async def _sleep_background(self, seconds: float) -> None:
         await asyncio.sleep(max(0.0, float(seconds or 0.0)))

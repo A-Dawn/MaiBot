@@ -109,6 +109,8 @@ async def _resolve_person_id(
         result = await memory_service.profile_admin(
             action="resolve_identity",
             identifier=clean_person_name,
+            platform=platform,
+            group_id=group_id,
         )
         if not result.get("success"):
             raise RuntimeError(f"人物身份解析失败: {result.get('error', '')}")
@@ -268,36 +270,6 @@ async def handle_tool(
         )
     primary_hit_count = len(result.hits)
 
-    # 方案2：人物过滤未命中时，降级到关键词检索，避免直接“空结果”。
-    if result.success and person_id and not result.filtered and not result.hits and clean_query:
-        fallback_applied = True
-        fallback_reason = "person_filter_miss"
-        fallback_query = clean_query
-        effective_mode = "search"
-        logger.info(
-            f"{runtime.log_prefix} 人物过滤未命中，降级为关键词检索: "
-            f"query={fallback_query!r} original_mode={mode} person_id={person_id!r}"
-        )
-        try:
-            fallback_result = await memory_service.search(
-                fallback_query,
-                limit=limit,
-                mode="search",
-                chat_id=session_id,
-                person_id="",
-                time_start=None,
-                time_end=None,
-                respect_filter=respect_filter,
-                user_id=user_id,
-                group_id=group_id,
-            )
-            if fallback_result.success:
-                result = fallback_result
-            else:
-                logger.warning(f"{runtime.log_prefix} 关键词降级检索失败，回退原结果: error={fallback_result.error}")
-        except Exception as exc:
-            logger.warning(f"{runtime.log_prefix} 关键词降级检索异常，回退原结果: {exc}")
-
     structured_content: Dict[str, Any] = result.to_dict()
     structured_content.update(
         {
@@ -329,9 +301,8 @@ async def handle_tool(
         )
 
     content = _build_success_content(result, limit=limit)
-    notice = "提示：人物定向检索未命中，已自动降级为关键词检索。" if fallback_applied else ""
     metadata: Dict[str, Any] = with_memory_feedback_task()
-    content = build_memory_result_preview(result, content, session_id=session_id, limit=limit, notice=notice)
+    content = build_memory_result_preview(result, content, session_id=session_id, limit=limit)
     replyer_memory_reference = _build_replyer_memory_reference(structured_content)
     if replyer_memory_reference:
         metadata["replyer_memory_reference"] = replyer_memory_reference

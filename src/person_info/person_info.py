@@ -535,7 +535,9 @@ async def store_person_memory_from_answer(
             group_id=session_group_id,
         )
 
-        if getattr(result, "success", False):
+        if result.detail.startswith("attribution_"):
+            logger.debug(f"人物事实未通过来源核验: person_id={person_id} detail={result.detail}")
+        elif getattr(result, "success", False):
             logger.info(
                 f"成功写回人物事实到长期记忆: person={participant_name} person_id={person_id} chat_id={clean_chat_id}"
             )

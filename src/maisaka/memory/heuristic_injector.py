@@ -154,7 +154,8 @@ class HeuristicMemoryInjector:
 
         state.last_recall_at = now
         state.last_message_count = total_message_count
-        state.cached_reference = reference
+        # 人物证据会因消息修改或账号迁移而失效，跨轮复用需重新核验。
+        state.cached_reference = "" if any(hit.metadata.get("attribution_verified") for hit in hits) else reference
         state.cache_expires_at = now + cache_ttl if cache_ttl > 0 else 0.0
         if reference:
             logger.info(

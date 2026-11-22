@@ -5,18 +5,18 @@
 person_id -> 用户名/别名 -> 图谱关系 + 向量证据 -> 证据总结画像 -> 快照版本化存储
 """
 
+import asyncio
 import hashlib
 import json
 import time
 from typing import Any, Dict, List, Optional, Tuple
 
 from json_repair import repair_json
-from sqlalchemy import or_
 from sqlmodel import select
 
 
 from src.common.database.database import get_db_session
-from src.common.database.database_model import PersonInfo
+from src.common.database.database_model import Individual, Messages, PersonInfo
 from src.common.logger import get_logger
 from src.config.config import global_config
 from src.services import llm_service as llm_api
@@ -45,7 +45,7 @@ from .profile_text import build_profile_injection_text, build_structured_profile
 logger = get_logger("A_Memorix.PersonProfileService")
 
 PROFILE_CLASSIFICATION_REQUEST_TYPE = "A_Memorix.PersonProfileEvidenceClassify"
-PROFILE_GENERATION_VERSION = 3
+PROFILE_GENERATION_VERSION = 4
 
 
 class PersonProfileService:
@@ -249,50 +249,54 @@ class PersonProfileService:
             return None
 
     @staticmethod
-    def resolve_person_id(identifier: str, *, metadata_store: Optional[MetadataStore] = None) -> str:
-        """按 ID 或唯一的确切称呼解析；同名、子串匹配不能用来认领身份。"""
-        if not identifier:
-            return ""
-        key = str(identifier).strip()
+    def resolve_person_id(
+        identifier: str, *, metadata_store: Optional[MetadataStore] = None,
+        platform: str = "", group_id: str = "",
+    ) -> str:
+        """保留显式 ID 的优先级，重名称呼需要当前会话的身份证据。"""
+        from src.person_info.identity import person_id_for, resolve_user_id
+
+        key = identifier.strip()
         if not key:
             return ""
-
-        try:
-            with get_db_session(auto_commit=False) as session:
-                record = session.exec(select(PersonInfo.person_id).where(PersonInfo.person_id == key).limit(1)).first()
-                if record:
-                    return str(record)
-
-                records = session.exec(
-                    select(PersonInfo).where(
-                        or_(
-                            PersonInfo.person_name == key,
-                            PersonInfo.user_nickname == key,
-                            PersonInfo.group_cardname.contains(key),
-                        )
-                    )
-                ).all()
-                candidates = {
-                    str(record.person_id)
-                    for record in records
-                    if key
-                    in [
-                        record.person_name,
-                        record.user_nickname,
-                        *PersonProfileService._parse_group_nicks(record.group_cardname),
-                    ]
-                }
-                if metadata_store is not None:
-                    candidates.update(item["person_id"] for item in metadata_store.find_person_identities(key))
-                if candidates:
-                    return next(iter(candidates)) if len(candidates) == 1 else ""
-        except Exception as e:
-            logger.warning(f"按别名解析 person_id 失败: identifier={key}, err={e}")
-
-        if len(key) == 32 and all(ch in "0123456789abcdefABCDEF" for ch in key):
-            return key.lower()
-
-        return ""
+        is_id = len(key) == 32 and all(char in "0123456789abcdef" for char in key.lower())
+        with get_db_session(auto_commit=False) as session:
+            token = key.lower() if is_id else key
+            primary = session.exec(select(PersonInfo.person_id).where(PersonInfo.person_id == token)).first()
+            if primary:
+                return token
+            if metadata_store is not None:
+                account = metadata_store.query("SELECT platform,user_id FROM person_identities WHERE person_id=?", (token,))
+                if account:
+                    account_platform, user = account[0]["platform"], account[0]["user_id"]
+                    if person_id_for(account_platform, resolve_user_id(account_platform, user)) == token:
+                        return token
+                    return ""
+            if is_id:
+                return ""
+            if platform:
+                canonical_user = resolve_user_id(platform, key)
+                pid = person_id_for(platform, canonical_user)
+                host_match = session.exec(select(PersonInfo.person_id).where(
+                    PersonInfo.person_id == pid, PersonInfo.user_id == canonical_user,
+                )).first()
+                if host_match or metadata_store is not None and metadata_store.bound_account(pid) == canonical_user:
+                    return pid
+                if key.isdecimal():
+                    return ""
+            query = select(PersonInfo.person_id).join(Individual).where(Individual.display_name == key)
+            if platform:
+                query = query.where(PersonInfo.platform == platform)
+            candidates = set(session.exec(query.limit(2)).all())
+            if metadata_store is not None and platform and group_id:
+                newest = session.exec(select(Messages.id).order_by(Messages.id.desc()).limit(1)).first()
+                if not metadata_store.observed_names_ready(newest or 0):
+                    return ""
+        if metadata_store is not None and platform and group_id:
+            normalized_platform = platform.split("-")[1] if "-" in platform else platform
+            local = metadata_store.observed_name_candidates(normalized_platform, group_id, key)
+            candidates.update(local)
+        return next(iter(candidates)) if len(candidates) == 1 else ""
 
     @staticmethod
     def _parse_group_nicks(raw_value: Any) -> List[str]:
@@ -443,11 +447,37 @@ class PersonProfileService:
 
     def get_person_aliases(self, person_id: str) -> Tuple[List[str], str]:
         """获取画像实际使用的别名集合和主展示名。"""
-        details = self.get_person_alias_details(person_id)
-        return (
-            list(details["effective_aliases"]),
-            str(details["primary_name"]),
+        with get_db_session(auto_commit=False) as session:
+            name = session.exec(select(Individual.display_name).join(PersonInfo)
+                                .where(PersonInfo.person_id == person_id)).first()
+        if not name:
+            rows = self.metadata_store.query("SELECT canonical_name FROM person_identities WHERE person_id=?",
+                                             (person_id,))
+            name = rows[0]["canonical_name"] if rows else person_id
+        override = self.metadata_store.get_person_profile_alias_override(person_id)
+        return list(override["aliases"]) if override else [name], name
+
+    def _verified_profile_evidence(self, pid: str, limit: int) -> List[Dict[str, Any]]:
+        # 最近使用的人物优先排队。首次访问只取有限候选，不遍历历史别名。
+        direct = self.metadata_store.query(
+            "SELECT hash FROM paragraphs WHERE source=? AND COALESCE(is_deleted,0)=0 ORDER BY rowid DESC LIMIT ?",
+            ("person_fact:" + pid, limit),
         )
+        proven = self.metadata_store.query(
+            "SELECT DISTINCT paragraph_hash AS hash FROM person_fact_verification "
+            "WHERE person_id=? AND state='verified' LIMIT ?", (pid, limit),
+        )
+        keys = list(dict.fromkeys(item["hash"] for item in [*proven, *direct]))
+        rows = self.metadata_store.get_paragraphs_by_hashes(keys)
+        evidence = []
+        for key in keys:
+            if key not in rows:
+                continue
+            row = self.metadata_store.project_fact_paragraph(rows[key], pid)
+            if row:
+                evidence.append({"hash": key, "type": "paragraph", "content": row["content"],
+                                 "metadata": row["metadata"], "source": row["source"], "score": 1.0})
+        return evidence[:limit]
 
     def _collect_relation_evidence(
         self,
@@ -1139,7 +1169,7 @@ class PersonProfileService:
         """查询或刷新人物画像。"""
         pid = str(person_id or "").strip()
         if not pid and person_keyword:
-            pid = self.resolve_person_id(person_keyword, metadata_store=self.metadata_store)
+            pid = await asyncio.to_thread(self.resolve_person_id, person_keyword, metadata_store=self.metadata_store)
 
         if not pid:
             return {
@@ -1147,29 +1177,18 @@ class PersonProfileService:
                 "error": "person_id 无效，且未能通过别名解析",
             }
 
-        latest = self.metadata_store.get_latest_person_profile_snapshot(pid)
-        if not force_refresh and not self._is_snapshot_stale(latest, ttl_seconds):
-            aliases, primary_name = self.get_person_aliases(pid)
-            payload = {
-                "success": True,
-                "person_id": pid,
-                "person_name": primary_name,
-                "from_cache": True,
-                **(latest or {}),
-            }
-            if aliases and not payload.get("aliases"):
-                payload["aliases"] = aliases
-            return {
-                **self._apply_manual_override(pid, payload),
-            }
-
-        aliases, primary_name = self.get_person_aliases(pid)
-        if not aliases and person_keyword:
-            aliases = [person_keyword.strip()]
-            primary_name = person_keyword.strip()
-        relation_edges = self._collect_relation_evidence(aliases, limit=max(10, top_k * 2), person_id=pid)
-        vector_evidence = await self._collect_vector_evidence(aliases, top_k=max(4, top_k), person_id=pid)
-        fact_claims = self._collect_person_fact_claims(pid, limit=max(32, top_k * 8))
+        aliases, primary_name = await asyncio.to_thread(self.get_person_aliases, pid)
+        vector_evidence = await asyncio.to_thread(self._verified_profile_evidence, pid, max(4, top_k))
+        if not vector_evidence:
+            return await asyncio.to_thread(self._apply_manual_override, pid, {
+                "success": True, "person_id": pid, "person_name": primary_name, "aliases": aliases,
+                "profile_text": "", "evidence_ids": [], "from_cache": False,
+            })
+        latest = await asyncio.to_thread(self.metadata_store.get_latest_person_profile_snapshot, pid)
+        relation_edges: List[Dict[str, Any]] = []
+        verified_texts = {text for item in vector_evidence for text in item["content"].splitlines()}
+        claims = await asyncio.to_thread(self._collect_person_fact_claims, pid, limit=max(32, top_k * 8))
+        fact_claims = [claim for claim in claims if claim["value_text"] in verified_texts]
         evidence_fingerprint = self._profile_evidence_fingerprint(
             person_id=pid,
             primary_name=primary_name,
@@ -1179,13 +1198,13 @@ class PersonProfileService:
             fact_claims=fact_claims,
         )
         expires_at = time.time() + float(ttl_seconds) if ttl_seconds > 0 else None
-        if latest and str(latest.get("evidence_fingerprint", "")) == evidence_fingerprint:
+        if not force_refresh and latest and str(latest.get("evidence_fingerprint", "")) == evidence_fingerprint:
             snapshot_id = latest.get("snapshot_id")
             if snapshot_id is None:
                 raise RuntimeError("人物画像快照缺少 snapshot_id，无法执行证据版本短路")
             refresh_note = source_note if source_note else str(latest.get("source_note", ""))
-            refreshed = self.metadata_store.refresh_person_profile_snapshot_cache(
-                int(snapshot_id),
+            refreshed = await asyncio.to_thread(
+                self.metadata_store.refresh_person_profile_snapshot_cache, int(snapshot_id),
                 expires_at=expires_at,
                 source_note=refresh_note,
             )
@@ -1199,7 +1218,7 @@ class PersonProfileService:
             }
             if aliases and not payload.get("aliases"):
                 payload["aliases"] = aliases
-            return self._apply_manual_override(pid, payload)
+            return await asyncio.to_thread(self._apply_manual_override, pid, payload)
 
         classified_buckets = await self._classify_profile_evidence(
             person_id=pid,
@@ -1232,7 +1251,15 @@ class PersonProfileService:
             classified_buckets=classified_buckets,
         )
 
-        snapshot = self.metadata_store.upsert_person_profile_snapshot(
+        current = await asyncio.to_thread(self._verified_profile_evidence, pid, max(4, top_k))
+        if current != vector_evidence:
+            return await asyncio.to_thread(self._apply_manual_override, pid, {
+                "success": True, "person_id": pid, "person_name": primary_name, "profile_text": "",
+                "evidence_ids": [], "from_cache": False,
+            })
+
+        snapshot = await asyncio.to_thread(
+            self.metadata_store.upsert_person_profile_snapshot,
             person_id=pid,
             profile_text=profile_text,
             aliases=aliases,
@@ -1251,9 +1278,7 @@ class PersonProfileService:
             "from_cache": False,
             **snapshot,
         }
-        return {
-            **self._apply_manual_override(pid, payload),
-        }
+        return await asyncio.to_thread(self._apply_manual_override, pid, payload)
 
     @staticmethod
     def format_persona_profile_block(profile: Dict[str, Any]) -> str:

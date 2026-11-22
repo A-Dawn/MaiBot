@@ -16,7 +16,7 @@ from .knowledge_types import (
 
 logger = get_logger("A_Memorix.MetadataSchema")
 
-SCHEMA_VERSION = 31
+SCHEMA_VERSION = 32
 RUNTIME_AUTO_MIGRATION_MIN_SCHEMA_VERSION = 9
 
 
@@ -48,6 +48,47 @@ class MetadataSchemaMixin:
             )
         """)
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_person_identity_alias ON person_identity_aliases(alias)")
+
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS observed_person_names (
+                platform TEXT NOT NULL, group_id TEXT NOT NULL, name TEXT NOT NULL,
+                person_id TEXT NOT NULL REFERENCES person_identities(person_id) ON DELETE CASCADE,
+                PRIMARY KEY(platform, group_id, name, person_id)
+            )
+        """)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS person_fact_verification (
+                paragraph_hash TEXT NOT NULL REFERENCES paragraphs(hash) ON DELETE CASCADE,
+                person_id TEXT NOT NULL, fact TEXT NOT NULL, revision TEXT NOT NULL,
+                state TEXT NOT NULL CHECK(state IN ('pending','verified','conflict','insufficient')),
+                priority INTEGER NOT NULL DEFAULT 0, proof TEXT NOT NULL DEFAULT '',
+                supplement TEXT NOT NULL DEFAULT '[]',
+                PRIMARY KEY(paragraph_hash, person_id, fact)
+            )
+        """)
+        cursor.execute("""CREATE INDEX IF NOT EXISTS idx_person_verification_work
+                          ON person_fact_verification(state, priority DESC)""")
+        cursor.execute("""CREATE TABLE IF NOT EXISTS person_verification_cursor (
+                          id INTEGER PRIMARY KEY CHECK(id=1), last_row INTEGER NOT NULL)""")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_verification_person ON person_fact_verification(person_id,state)")
+        cursor.execute("""CREATE TABLE IF NOT EXISTS identity_binding_conflicts (
+                          platform TEXT, user_id TEXT, expected_id TEXT, previous TEXT,
+                          PRIMARY KEY(platform,user_id,expected_id,previous))""")
+        cursor.execute("""CREATE TABLE IF NOT EXISTS identity_repair_log (
+                          id INTEGER PRIMARY KEY, kind TEXT NOT NULL, item TEXT NOT NULL,
+                          previous TEXT, updated TEXT, recorded_at REAL DEFAULT (unixepoch()))""")
+        cursor.execute("""CREATE TRIGGER IF NOT EXISTS audit_person_verification AFTER UPDATE ON person_fact_verification
+                    WHEN OLD.state<>NEW.state OR OLD.revision<>NEW.revision OR OLD.proof<>NEW.proof OR OLD.supplement<>NEW.supplement BEGIN
+                    INSERT INTO identity_repair_log(kind,item,previous,updated) VALUES(
+                        'fact',json_array(NEW.paragraph_hash,NEW.person_id,NEW.fact),
+                        json_array(OLD.state,OLD.revision,OLD.proof,OLD.supplement),
+                        json_array(NEW.state,NEW.revision,NEW.proof,NEW.supplement));
+                    END""")
+        cursor.execute("""CREATE TABLE IF NOT EXISTS observed_names_baseline (
+                          id INTEGER PRIMARY KEY CHECK(id=1), last_message INTEGER NOT NULL)""")
+        cursor.execute("""CREATE TABLE IF NOT EXISTS observed_names_cursor (
+                          id INTEGER PRIMARY KEY CHECK(id=1), last_message INTEGER NOT NULL)""")
+
 
     @staticmethod
     def _ensure_episode_empty_group_table(cursor: sqlite3.Cursor) -> None:
@@ -117,6 +158,13 @@ class MetadataSchemaMixin:
         logger.info(
             f"检测到 metadata schema 需要运行时自动迁移: current={current_version}, target={SCHEMA_VERSION}",
         )
+        if current_version == 31:
+            # 32 的索引均建立在新表上，首次启动不遍历历史消息和记忆。
+            with self.transaction(immediate=True) as conn:
+                self._ensure_person_identity_tables(conn.cursor())
+                conn.execute("INSERT OR IGNORE INTO schema_migrations VALUES (?, ?)",
+                             (32, datetime.now().timestamp()))
+            return
         self._repair_historical_foreign_key_violations(current_version=current_version)
         self._migrate_schema()
         alias_result = self.rebuild_relation_hash_aliases()

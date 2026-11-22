@@ -309,8 +309,9 @@ class MemoryIngestService(KernelServiceBase):
         metadata = coerce_metadata_dict(kwargs.get("metadata"))
         # 只有宿主已经确认目标人物和实际来源的自动写回参与语义去重。
         if (kwargs.get("source_type") == "person_fact" and not metadata.get("dedup_managed")
-                and metadata.get("evidence_message_ids") and len(tokens(kwargs.get("person_ids"))) == 1
                 and metadata.get("writeback_source") == "memory_flow_service"):
+            if len(tokens(kwargs.get("person_ids"))) != 1:
+                return {"success": True, "stored_ids": [], "detail": "attribution_insufficient"}
             if self._is_chat_filtered(respect_filter=kwargs.get("respect_filter", True),
                                       stream_id=kwargs.get("chat_id", ""), group_id=kwargs.get("group_id", ""),
                                       user_id=kwargs.get("user_id", "")):
@@ -325,6 +326,13 @@ class MemoryIngestService(KernelServiceBase):
         content = normalize_text(kwargs["text"])
         if not content:
             return {"success": True, "stored_ids": [], "reason": "empty_text"}
+        from ...storage.person_verification import inspect_source
+
+        state, _ = await cancellation_safe_to_thread(
+            inspect_source, {"metadata": {**metadata, "chat_id": kwargs["chat_id"]}}, person_id, content,
+        )
+        if state != "verified":
+            return {"success": True, "stored_ids": [], "detail": f"attribution_{state}"}
         source = {"platform": str(metadata.get("platform", "")), "chat_id": kwargs["chat_id"],
                   "message_ids": sorted(set(str(value) for value in metadata["evidence_message_ids"])),
                   "observed_at": kwargs.get("timestamp")}
@@ -371,6 +379,7 @@ class MemoryIngestService(KernelServiceBase):
         if not reused:
             await cancellation_safe_to_thread(self.metadata_store.update_paragraph_metadata, paragraph_hash,
                                    {"fact_claim_ids": claim_ids, "dedup_phase": "complete"}, merge=True)
+            await cancellation_safe_to_thread(self.metadata_store.verify_written_fact, paragraph_hash, person_id, content)
             await cancellation_safe_to_thread(self.metadata_store.enqueue_episode_source_rebuild, f"person_fact:{person_id}",
                                    reason="dedup_person_fact_complete")
         await cancellation_safe_to_thread(self._persist)

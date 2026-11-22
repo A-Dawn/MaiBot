@@ -122,6 +122,8 @@ _EPISODE_ACTIONS = {"query", "list", "get", "status", "rebuild", "process_source
 _PROFILE_ACTIONS = {
     "observe_identity",
     "resolve_identity",
+    "list_attributions",
+    "review_attribution",
     "query",
     "evidence",
     "correct_evidence",

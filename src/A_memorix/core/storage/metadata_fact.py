@@ -1125,7 +1125,38 @@ class MetadataFactMixin:
         )
         return [self._fact_evidence_row(row) or {} for row in cursor.fetchall()]
 
-    def project_fact_paragraph(self, paragraph: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    def project_fact_paragraph(
+        self, paragraph: Dict[str, Any], person_id: str = "",
+    ) -> Optional[Dict[str, Any]]:
+        from .person_verification import bindings
+
+        projected = self._active_fact_paragraph(paragraph)
+        if projected is None:
+            return None
+        people = bindings(paragraph)
+        if not people:
+            metadata = paragraph.get("metadata") or {}
+            if person_id or metadata.get("source_type") == "person_fact" or metadata.get("identity_bindings"):
+                return None
+            return projected
+        if len(people) != 1 and str(paragraph.get("source") or "").startswith("person_fact:"):
+            return None
+        if person_id and person_id not in people:
+            return None
+        active = set(projected["content"].splitlines())
+        allowed = self.verified_facts(paragraph, person_id or None)
+        kept = [text for text in allowed if text in active]
+        if not kept:
+            return None
+        # 别名、原始摘要和未核验的事实不能通过附带 metadata 再次进入提示词。
+        meta = {key: value for key, value in paragraph["metadata"].items()
+                if key in {"source", "chat_id", "group_id", "platform", "source_type", "scope_type", "dedup_phase"}}
+        meta["attribution_verified"] = True
+        if person_id or len(people) == 1:
+            meta["person_ids"] = [person_id or people[0]]
+        return {**projected, "content": "\n".join(kept), "metadata": meta}
+
+    def _active_fact_paragraph(self, paragraph: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """仅对去重管理的新段落投影有效事实，旧混合段落保留原文。"""
         metadata = paragraph.get("metadata") or {}
         if metadata.get("dedup_phase") == "pending":

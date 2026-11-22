@@ -8,6 +8,8 @@ import time
 from src.chat.message_receive.chat_manager import chat_manager
 from src.common.logger import get_logger
 
+from src.A_memorix.core.storage.person_verification import bindings
+
 from ...retrieval import RetrievalResult, RetrievalScope
 from ...utils.feedback_policy import (
     feedback_cfg_episode_query_block_enabled,
@@ -97,35 +99,52 @@ class MemorySearchHitProcessingService(KernelServiceBase):
             filtered.append(item)
         return filtered
 
-    def _filter_user_visible_hits(self, hits: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    def _filter_user_visible_hits(self, hits: List[Dict[str, Any]], person_id: str = "") -> List[Dict[str, Any]]:
         # 迁移覆盖后保留的恢复记录不参与检索，包括启用全局记忆共享时。
         hits = [item for item in hits if not str(
             coerce_metadata_dict(item.get("metadata")).get("source") or item.get("source") or ""
         ).startswith("migration_archive:")]
-        hits = self._filter_fact_paragraph_hits(hits)
+        hits = self._filter_fact_paragraph_hits(hits, person_id)
         hits = self._filter_current_effective_hits(self._filter_active_relation_hits(self._filter_episode_hits(hits)))
         return [{**hit, "metadata": visible_fact_metadata(coerce_metadata_dict(hit["metadata"]))}
                 if "metadata" in hit else hit for hit in hits]
 
-    def _filter_fact_paragraph_hits(self, hits: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    def _filter_fact_paragraph_hits(self, hits: List[Dict[str, Any]], person_id: str = "") -> List[Dict[str, Any]]:
         """写入未完成和证据撤销后的事实不能通过段落或关系旁路回到提示词。"""
         if self.metadata_store is None:
-            return hits
+            return [] if person_id else [hit for hit in hits if not bindings(hit)]
         paragraph_ids = [item["hash"] for item in hits if item.get("type") == "paragraph" and item.get("hash")]
         relation_ids = [item["hash"] for item in hits if item.get("type") == "relation" and item.get("hash")]
         paragraphs = self.metadata_store.get_paragraphs_by_hashes(paragraph_ids) if paragraph_ids else {}
         relation_paragraphs = self.metadata_store.get_paragraphs_by_relation_hashes(relation_ids) if relation_ids else {}
         result = []
         for hit in hits:
-            if hit.get("type") == "paragraph" and hit.get("hash") in paragraphs:
-                paragraph = self.metadata_store.project_fact_paragraph(paragraphs[hit["hash"]])
+            if person_id and hit.get("type") != "paragraph":
+                continue
+            if hit.get("type") == "episode":
+                links = self.metadata_store.query("SELECT paragraph_hash FROM episode_paragraphs WHERE episode_id=? LIMIT 33",
+                                                  (hit.get("episode_id", ""),))
+                if len(links) > 32:
+                    continue
+                linked = self.metadata_store.get_paragraphs_by_hashes([r["paragraph_hash"] for r in links])
+                if len(links) != len(linked) or any(bindings(row) for row in linked.values()) or bindings(hit) or (
+                    not linked and (hit.get("metadata") or {}).get("participants")
+                ):
+                    continue
+            if hit.get("type") == "paragraph":
+                row = paragraphs.get(hit.get("hash"))
+                if row is None:
+                    continue
+                paragraph = self.metadata_store.project_fact_paragraph(row, person_id)
                 if paragraph is None:
                     continue
                 hit = {**hit, "content": paragraph["content"], "metadata": paragraph["metadata"]}
+            elif hit.get("type") == "relation" and bindings(hit):
+                continue
             elif hit.get("type") == "relation" and relation_paragraphs.get(hit.get("hash")):
                 supported = False
                 for row in relation_paragraphs[hit["hash"]]:
-                    if self.metadata_store.fact_relation_has_support(hit["hash"], row):
+                    if not bindings(row) and self.metadata_store.fact_relation_has_support(hit["hash"], row):
                         supported = True
                         break
                 if not supported:
@@ -173,7 +192,7 @@ class MemorySearchHitProcessingService(KernelServiceBase):
             if valid_to is not None and valid_to <= now:
                 continue
             next_item = dict(item)
-            next_item["metadata"] = metadata
+            next_item["metadata"] = item.get("metadata", metadata) if item_type == "paragraph" else metadata
             filtered.append(next_item)
         return filtered
 
@@ -845,10 +864,7 @@ class MemorySearchHitProcessingService(KernelServiceBase):
             metadata = item.get("metadata", {}) or {}
             if person_id in (metadata.get("person_ids", []) or []):
                 filtered.append(item)
-                continue
-            if person_id and person_id in str(item.get("content", "") or ""):
-                filtered.append(item)
-        return filtered or hits
+        return filtered
 
     def _filter_active_relation_hits(self, hits: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         if self.metadata_store is None:

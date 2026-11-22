@@ -3151,6 +3151,9 @@ class AMemorixEpisodeConfig(ConfigBase):
 class AMemorixPersonProfileConfig(ConfigBase):
     """人物画像配置"""
 
+    attribution_verification_enabled: bool = True
+    """后台按小批次核验历史事实的人物归属；关闭后仍执行读取时的身份约束。"""
+
     enabled: bool = Field(
         default=True,
         json_schema_extra={

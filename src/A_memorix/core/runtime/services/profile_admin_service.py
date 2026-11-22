@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any, Dict, List, Optional, Set
 
 import asyncio
+import json
 import time
 import unicodedata
 
@@ -33,10 +34,14 @@ class MemoryProfileAdminService(KernelServiceBase):
         assert self.metadata_store is not None
         count = self.metadata_store.count_uncertain_person_fact_claims(person_id)
         claims = self.metadata_store.list_uncertain_person_fact_claims(person_id, limit=512) if context_text else []
+        evidence = self.person_profile_service._verified_profile_evidence(person_id, 32) if claims else []
+        verified = {line for row in evidence for line in row["content"].splitlines()}
         query_grams = self._profile_relevance_grams(context_text)
         ranked = []
         if query_grams:
             for claim in claims:
+                if claim["value_text"] not in verified:
+                    continue
                 overlap = query_grams & self._profile_relevance_grams(str(claim.get("value_text", "")))
                 if overlap:
                     ranked.append((len(overlap), float(claim.get("last_confirmed_at", 0)), claim))
@@ -182,7 +187,7 @@ class MemoryProfileAdminService(KernelServiceBase):
                     }
                 )
 
-        evidence = self._filter_user_visible_hits(evidence)
+        evidence = self._filter_user_visible_hits(evidence, str(profile.get("person_id") or requested_person_id))
         text = str(profile.get("profile_text", "") or "").strip()
         traits = [line.strip("- ").strip() for line in text.splitlines() if line.strip()][:8]
         return {
@@ -206,7 +211,7 @@ class MemoryProfileAdminService(KernelServiceBase):
             limit=max(4, int(limit or 10)),
             source_note="sdk_memory_kernel.get_person_profile",
         )
-        return self._build_person_profile_response(profile, requested_person_id=person_id, limit=limit)
+        return await asyncio.to_thread(self._build_person_profile_response, profile, requested_person_id=person_id, limit=limit)
 
     async def refresh_person_profile(
         self, person_id: str, limit: int = 10, *, mark_active: bool = True
@@ -229,11 +234,29 @@ class MemoryProfileAdminService(KernelServiceBase):
         assert self.person_profile_service is not None
 
         act = str(action or "").strip().lower()
+        if act == "list_attributions":
+            rows = await asyncio.to_thread(
+                self.metadata_store.query,
+                "SELECT rowid AS cursor, paragraph_hash, person_id, fact, state, revision, supplement "
+                "FROM person_fact_verification WHERE person_id=? AND rowid>? ORDER BY rowid LIMIT ?",
+                (kwargs["person_id"], int(kwargs.get("cursor", 0)), min(100, max(1, int(kwargs.get("limit", 20))))),
+            )
+            for row in rows:
+                row["message_ids"] = json.loads(row.pop("supplement"))
+            return {"success": True, "items": rows}
+        if act == "review_attribution":
+            await asyncio.to_thread(
+                self.metadata_store.review_attribution, paragraph_hash=kwargs["paragraph_hash"],
+                person_id=kwargs["person_id"], fact=kwargs["fact"], expected_revision=kwargs["revision"],
+                previous_message_ids=kwargs["previous_message_ids"], message_ids=kwargs["message_ids"],
+            )
+            return {"success": True}
         if act == "resolve_identity":
             person_id = await asyncio.to_thread(
                 self.person_profile_service.resolve_person_id,
                 str(kwargs["identifier"]).strip(),
                 metadata_store=self.metadata_store,
+                platform=str(kwargs.get("platform") or ""), group_id=str(kwargs.get("group_id") or ""),
             )
             return {"success": True, "person_id": person_id}
         if act == "observe_identity":
@@ -259,8 +282,8 @@ class MemoryProfileAdminService(KernelServiceBase):
             person_id = str(profile.get("person_id", "") or "").strip()
             if bool(profile.get("success")) and person_id:
                 profile.update(
-                    self._uncertain_profile_candidates(
-                        person_id,
+                    await asyncio.to_thread(
+                        self._uncertain_profile_candidates, person_id,
                         str(kwargs.get("context_text", "") or ""),
                     )
                 )
@@ -326,12 +349,13 @@ class MemoryProfileAdminService(KernelServiceBase):
             items = []
             for row in rows:
                 person_id = str(row.get("person_id", "") or "").strip()
-                override = self.metadata_store.get_person_profile_override(person_id)
+                override = await asyncio.to_thread(self.metadata_store.get_person_profile_override, person_id)
+                preview = await asyncio.to_thread(self.person_profile_service._verified_profile_evidence, person_id, 2)
                 items.append(
                     {
                         "person_id": person_id,
                         "profile_version": int(row.get("profile_version", 0) or 0),
-                        "profile_text": str(row.get("profile_text", "") or ""),
+                        "profile_text": override["override_text"] if override else "\n".join(item["content"] for item in preview),
                         "updated_at": row.get("updated_at"),
                         "expires_at": row.get("expires_at"),
                         "source_note": str(row.get("source_note", "") or ""),

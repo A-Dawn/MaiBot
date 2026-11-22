@@ -15,6 +15,9 @@ class MetadataIdentityMixin:
         aliases: List[str],
         group_id: str = "",
         preferred_name: str = "",
+        include_history: bool = True,
+        confirmed_sender: bool = True,
+        previous_user_id: str = "",
     ) -> Dict[str, Any]:
         """只按 ID 合并身份，保留每次观察到的昵称，不用昵称认领其他用户。"""
         if not person_id or not platform.strip() or not user_id.strip():
@@ -26,9 +29,24 @@ class MetadataIdentityMixin:
                 "SELECT platform, user_id, canonical_name FROM person_identities WHERE person_id = ?",
                 (person_id,),
             ).fetchone()
+            owner = conn.execute("SELECT person_id FROM person_identities WHERE platform=? AND user_id=?",
+                                 (platform, user_id)).fetchone()
+            conflicting_owner = owner is not None and owner[0] != person_id
+            conflicting_header = existing is not None and (
+                existing[0] != platform or existing[1] not in (user_id, previous_user_id)
+            )
+            if conflicting_owner or conflicting_header:
+                # 保留有冲突的旧主键，当前消息仍使用根据平台账号计算出的 ID。
+                previous = str(owner[0]) if conflicting_owner else str(existing[1])
+                conn.execute("INSERT OR IGNORE INTO identity_binding_conflicts VALUES(?,?,?,?)",
+                             (platform, user_id, person_id, previous))
+                return {"person_id": person_id, "platform": platform, "user_id": user_id,
+                        "canonical_name": f"{user_id} [{person_id}]", "aliases": names}
             if existing is not None:
-                if existing[0] != platform or existing[1] != user_id:
-                    raise ValueError("person_id 已绑定其他平台用户，不能按称呼合并")
+                if existing[1] != user_id:
+                    conn.execute("UPDATE person_identities SET user_id=? WHERE person_id=?", (user_id, person_id))
+                    conn.execute("INSERT INTO identity_repair_log(kind,item,previous,updated) VALUES('account',?,?,?)",
+                                 (person_id, previous_user_id, user_id))
                 canonical_name = str(existing[2])
             else:
                 canonical_name = preferred_name.strip() or next(iter(names), user_id)
@@ -50,9 +68,42 @@ class MetadataIdentityMixin:
                        ON CONFLICT(person_id, alias, group_id) DO UPDATE SET last_seen = excluded.last_seen""",
                     (person_id, name, group_id, now, now),
                 )
+            conn.executemany(
+                "INSERT OR IGNORE INTO observed_person_names VALUES (?, ?, ?, ?)",
+                [(platform, group_id, name, person_id) for name in names if confirmed_sender],
+            )
+        if not include_history:
+            return {"person_id": person_id, "platform": platform, "user_id": user_id,
+                    "canonical_name": canonical_name, "aliases": names}
         identity = self.get_person_identity(person_id)
         assert identity is not None
         return identity
+
+    def bound_account(self, person_id: str) -> str:
+        row = self._conn.execute("SELECT user_id FROM person_identities WHERE person_id=?", (person_id,)).fetchone()
+        return row[0] if row else ""
+
+    def observed_names_ready(self, latest_host_message: int) -> bool:
+        target = self._conn.execute("SELECT last_message FROM observed_names_baseline WHERE id=1").fetchone()
+        if target is None:
+            with self.transaction(immediate=True) as conn:
+                conn.execute("INSERT OR IGNORE INTO observed_names_baseline VALUES(1,?)", (latest_host_message,))
+                target = conn.execute("SELECT last_message FROM observed_names_baseline WHERE id=1").fetchone()
+        progress = self._conn.execute("SELECT last_message FROM observed_names_cursor WHERE id=1").fetchone()
+        return target[0] <= (progress[0] if progress else 0)
+
+    def observed_name_candidates(self, platform: str, group_id: str, name: str) -> List[str]:
+        rows = self._conn.execute(
+            "SELECT n.person_id, i.user_id FROM observed_person_names n JOIN person_identities i ON i.person_id=n.person_id "
+            "WHERE n.platform=? AND n.group_id=? AND n.name=? AND i.platform=n.platform LIMIT 2",
+            (platform, group_id, name),
+        )
+        from src.person_info.identity import person_id_for, resolve_user_id
+
+        candidates = list(rows)
+        if any(person_id_for(platform, resolve_user_id(platform, user)) != pid for pid, user in candidates):
+            return [""]
+        return [pid for pid, _ in candidates]
 
     def get_person_identity(self, person_id: str) -> Dict[str, Any] | None:
         row = self._conn.execute(

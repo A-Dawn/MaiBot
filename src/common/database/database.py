@@ -74,6 +74,7 @@ _db_initialized = False
 _db_initialize_lock = threading.Lock()
 
 _RUNTIME_PERFORMANCE_INDEXES = (
+    ("ix_individuals_display_name", "CREATE INDEX IF NOT EXISTS ix_individuals_display_name ON individuals (display_name)"),
     (
         "ix_jargons_status_count_id",
         "CREATE INDEX IF NOT EXISTS ix_jargons_status_count_id "

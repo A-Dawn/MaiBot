@@ -908,7 +908,9 @@ class SummaryImporter:
                          for relation in relations]
             facts = [{**fact, "person_ids": identity_context.metadata([fact["text"]])["person_ids"],
                       "text": identity_context.restore_text(fact["text"])} for fact in facts]
-            metadata = {**(metadata or {}), **identity_metadata}
+            metadata = {**(metadata or {}), **identity_metadata, "chat_id": stream_id,
+                        "attribution_fact_people": {fact["text"]: fact["person_ids"] for fact in facts},
+                        "evidence_message_ids": [str(msg.message_id) for msg in messages]}
             msg_times = [timestamp for msg in messages if (timestamp := _message_timestamp(msg)) is not None]
             time_meta = {}
             if msg_times:

@@ -31,6 +31,7 @@ from .metadata_fact import MetadataFactMixin
 from .metadata_feedback import MetadataFeedbackMixin
 from .metadata_fts import MetadataFTSMixin
 from .metadata_image import MetadataImageMixin
+from .person_verification import PersonVerificationMixin
 from .metadata_identity import MetadataIdentityMixin
 from .metadata_profile import MetadataProfileMixin
 from .metadata_schema import MetadataSchemaMixin, SCHEMA_VERSION
@@ -49,6 +50,7 @@ class MetadataStore(
     MetadataFeedbackMixin,
     MetadataImageMixin,
     MetadataIdentityMixin,
+    PersonVerificationMixin,
     MetadataProfileMixin,
 ):
     """
@@ -2974,6 +2976,13 @@ class MetadataStore(
             "paragraph_stale_relation_marks",
             "person_profile_refresh_queue",
             "person_profile_alias_overrides",
+            "person_fact_verification",
+            "person_verification_cursor",
+            "observed_person_names",
+            "observed_names_cursor",
+            "observed_names_baseline",
+            "identity_repair_log",
+            "identity_binding_conflicts",
             "person_identity_aliases",
             "person_identities",
             "fact_transitions",

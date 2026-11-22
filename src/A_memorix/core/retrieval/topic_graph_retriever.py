@@ -476,57 +476,19 @@ class TopicImportanceSolver:
     def __init__(self, config: Optional[TopicGraphConfig] = None):
         self.config = config or TopicGraphConfig()
 
-    @staticmethod
-    def _load_alias_map(metadata_store: MetadataStore, node_name_to_idx: Dict[str, int]) -> Dict[str, List[int]]:
-        """从人物身份别名表加载群昵称/简称到规范图节点的映射。"""
-        alias_map: Dict[str, List[int]] = {}
-        try:
-            rows = metadata_store.query(
-                """
-                SELECT LOWER(TRIM(a.alias)) AS alias_low, LOWER(TRIM(p.canonical_name)) AS canon_low
-                FROM person_identity_aliases a
-                JOIN person_identities p ON p.person_id = a.person_id
-                WHERE a.alias IS NOT NULL AND TRIM(a.alias) != ''
-                """
-            )
-        except Exception:
-            return alias_map
-
-        for row in rows:
-            alias_low = str(row.get("alias_low") or "").strip()
-            canon_low = str(row.get("canon_low") or "").strip()
-            u_idx = node_name_to_idx.get(canon_low)
-            if not alias_low or u_idx is None or len(alias_low) < 2 or alias_low in _GENERIC_STOP_ENTITIES:
-                continue
-            bucket = alias_map.setdefault(alias_low, [])
-            if u_idx not in bucket:
-                bucket.append(u_idx)
-        return alias_map
-
     def _build_literal_matcher(
         self,
         *,
         node_names: List[str],
         node_df: np.ndarray,
         num_paragraphs: int,
-        metadata_store: MetadataStore,
-        node_name_to_idx: Dict[str, int],
     ) -> Tuple[AhoCorasick, Dict[str, Tuple[int, ...]]]:
-        """构建带泛化词过滤与人物别名映射的 Aho-Corasick 自动机。"""
+        """根据图中的实体名构建自动机，过滤泛化词。"""
         pattern_buckets: Dict[str, List[int]] = {}
         for u_idx, name in enumerate(node_names):
             low = name.strip().lower()
             if _is_specific_literal_pattern(low, float(node_df[u_idx]), num_paragraphs):
                 pattern_buckets.setdefault(low, []).append(u_idx)
-
-        alias_map = self._load_alias_map(metadata_store, node_name_to_idx)
-        for alias_low, u_indices in alias_map.items():
-            if not _is_specific_literal_pattern(alias_low, 1.0, num_paragraphs):
-                continue
-            bucket = pattern_buckets.setdefault(alias_low, [])
-            for u_idx in u_indices:
-                if u_idx not in bucket:
-                    bucket.append(u_idx)
 
         matcher = AhoCorasick()
         frozen_map: Dict[str, Tuple[int, ...]] = {}
@@ -682,8 +644,6 @@ class TopicImportanceSolver:
             node_names=node_names,
             node_df=node_df,
             num_paragraphs=num_paragraphs,
-            metadata_store=metadata_store,
-            node_name_to_idx=node_name_to_idx,
         )
 
         if pe_weights:
@@ -1146,8 +1106,6 @@ class TopicImportanceSolver:
             node_names=node_names,
             node_df=node_df,
             num_paragraphs=num_paragraphs,
-            metadata_store=metadata_store,
-            node_name_to_idx=node_name_to_idx,
         )
 
         if pe_weights:

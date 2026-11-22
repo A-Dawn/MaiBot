@@ -6,6 +6,7 @@ import asyncio
 import json
 import sqlite3
 
+from src.A_memorix.core.storage.person_verification import inspect_source
 from src.A_memorix.host_service import a_memorix_host_service
 from src.common.logger import get_logger
 from src.services.memory_service import memory_service
@@ -65,6 +66,11 @@ async def reclassify_historical_person_facts(cursor: str = "", limit: int = 50) 
         if not isinstance(metadata, dict):
             continue
         if metadata.get("evidence_source") != "user_supported":
+            continue
+        state, _ = await asyncio.to_thread(
+            inspect_source, {"metadata": metadata}, row["person_id"], row["value_text"],
+        )
+        if state != "verified":
             continue
         current = await memory_service.fact_admin(action="get", claim_id=str(row["claim_id"]))
         claim = current.get("claim") if isinstance(current, dict) else None

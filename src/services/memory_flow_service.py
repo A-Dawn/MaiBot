@@ -152,11 +152,11 @@ class PersonFactWritebackService:
         if self._looks_ephemeral(reply_text):
             return
 
-        target_person = self._resolve_target_person(message)
+        target_person = await asyncio.to_thread(self._resolve_target_person, message)
         if target_person is None or not target_person.is_known:
             return
 
-        evidence = self._collect_user_evidence(message, target_person)
+        evidence = await asyncio.to_thread(self._collect_user_evidence, message, target_person)
         if not evidence.target_messages:
             return
         user_evidence_text = self._format_user_evidence(evidence)
@@ -223,22 +223,17 @@ class PersonFactWritebackService:
             person = Person(person_id=person_id)
             return person if person.is_known else None
 
-        reply_to = str(getattr(message, "reply_to", "") or "").strip()
-        if reply_to:
-            try:
-                replies = find_messages(message_id=reply_to, limit=1)
-            except Exception as exc:
-                logger.debug(f"查询 reply_to 目标失败: {exc}")
-                replies = []
-            if replies:
-                person = self._person_from_user_message(replies[0], fallback_platform=session_platform)
-                if person is not None:
-                    return person
-
         session_id = str(getattr(message, "session_id", "") or getattr(session, "session_id", "") or "").strip()
-        timestamp = self._extract_message_timestamp(message)
         if not session_id:
             return None
+        reply_to = str(getattr(message, "reply_to", "") or "").strip()
+        if reply_to:
+            replies = find_messages(session_id=session_id, platform=session_platform, message_id=reply_to, limit=2)
+            if len(replies) != 1:
+                return None
+            return self._person_from_user_message(replies[0], fallback_platform=session_platform)
+
+        timestamp = self._extract_message_timestamp(message)
         try:
             candidates = find_messages(
                 session_id=session_id,
@@ -281,7 +276,9 @@ class PersonFactWritebackService:
         reply_to = str(getattr(message, "reply_to", "") or "").strip()
         if reply_to:
             try:
-                replies = find_messages(message_id=reply_to, limit=1)
+                replies = find_messages(session_id=session_id, platform=person.platform, message_id=reply_to, limit=2)
+                if len(replies) != 1:
+                    return PersonFactEvidence(target_messages=[], context_messages=[])
             except Exception as exc:
                 logger.debug("查询人物事实 reply_to 证据失败: %s", exc)
                 replies = []
